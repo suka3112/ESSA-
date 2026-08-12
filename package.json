@@ -1,0 +1,23 @@
+{
+  "name": "essa-ap-automation",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ESSA AP Automation Platform - enterprise accounts payable orchestration (AP Portal). React + TypeScript + Tailwind frontend, modular Node.js/TypeScript backend.",
+  "workspaces": [
+    "server",
+    "web"
+  ],
+  "scripts": {
+    "dev": "concurrently -n api,web -c green,cyan \"npm run dev -w server\" \"npm run dev -w web\"",
+    "build": "npm run build -w server && npm run build -w web",
+    "start": "npm run start -w server",
+    "typecheck": "npm run typecheck -w server && npm run typecheck -w web",
+    "seed:reset": "npm run seed:reset -w server"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

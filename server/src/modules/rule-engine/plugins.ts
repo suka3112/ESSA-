@@ -44,8 +44,8 @@ export const customRulePlugins: Record<string, CustomRulePlugin> = {
     const pass = diffPct <= tolPct;
     return {
       pass,
-      expected: derived.toLocaleString('en-IN', { maximumFractionDigits: 2 }),
-      actual: total.toLocaleString('en-IN', { maximumFractionDigits: 2 }),
+      expected: derived.toLocaleString('en-US', { maximumFractionDigits: 2 }),
+      actual: total.toLocaleString('en-US', { maximumFractionDigits: 2 }),
       differencePct: Math.round(diffPct * 100) / 100,
       message: pass ? 'Invoice totals arithmetic reconciles' : `Invoice amount differs from subtotal + tax by ${diffPct.toFixed(2)}%`,
     };
@@ -84,8 +84,8 @@ export const customRulePlugins: Record<string, CustomRulePlugin> = {
     const pass = diffPct <= tolPct;
     return {
       pass,
-      expected: derived.toLocaleString('en-IN', { maximumFractionDigits: 2 }),
-      actual: subtotal.toLocaleString('en-IN', { maximumFractionDigits: 2 }),
+      expected: derived.toLocaleString('en-US', { maximumFractionDigits: 2 }),
+      actual: subtotal.toLocaleString('en-US', { maximumFractionDigits: 2 }),
       differencePct: Math.round(diffPct * 100) / 100,
       message: pass ? 'Meal count × rate reconciles with subtotal' : `Subtotal differs from meals × rate by ${diffPct.toFixed(2)}%`,
     };

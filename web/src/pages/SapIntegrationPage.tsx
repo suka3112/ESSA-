@@ -139,7 +139,9 @@ function ReferenceBrowser() {
   const [search, setSearch] = useState(params.get('search') ?? '');
   const { data, isLoading } = useQuery({
     queryKey: ['sap-ref', type, search],
-    queryFn: () => api.get<{ items: Record<string, unknown>[]; total: number }>(`/integrations/sap/reference${qs({ type, search })}`),
+    // This browser lists the whole read model rather than paging it, so it asks
+    // for the largest page the API allows.
+    queryFn: () => api.get<{ items: Record<string, unknown>[]; total: number }>(`/integrations/sap/reference${qs({ type, search, pageSize: 200 })}`),
   });
 
   return (
@@ -162,8 +164,8 @@ function ReferenceBrowser() {
             { key: 'poNumber', header: 'PO Number', render: (r) => <span className="font-medium">{String(r.poNumber)}</span> },
             { key: 'vendorName', header: 'Vendor', render: (r) => <span className="block max-w-48 truncate text-xs">{String(r.vendorName)}</span> },
             { key: 'poType', header: 'Type', render: (r) => <Badge tone="neutral">{String(r.poType)}</Badge> },
-            { key: 'totalAmount', header: 'Value', align: 'right', render: (r) => fmtMoney(Number(r.totalAmount)) },
-            { key: 'openAmount', header: 'Open', align: 'right', render: (r) => <span className="font-medium">{fmtMoney(Number(r.openAmount))}</span> },
+            { key: 'totalAmount', header: 'Value', align: 'right', render: (r) => fmtMoney(Number(r.totalAmount), String(r.currency ?? 'IDR')) },
+            { key: 'openAmount', header: 'Open', align: 'right', render: (r) => <span className="font-medium">{fmtMoney(Number(r.openAmount), String(r.currency ?? 'IDR'))}</span> },
             { key: 'validTo', header: 'Valid To', render: (r) => <span className="text-xs">{fmtDate(String(r.validTo))}</span> },
             { key: 'status', header: 'Status', render: (r) => <StatusBadge value={String(r.status)} /> },
           ]}
@@ -178,7 +180,7 @@ function ReferenceBrowser() {
             { key: 'poNumber', header: 'PO', render: (r) => String(r.poNumber) },
             { key: 'postingDate', header: 'Posting Date', render: (r) => fmtDate(String(r.postingDate)) },
             { key: 'totalQuantity', header: 'Qty', align: 'right', render: (r) => String(r.totalQuantity) },
-            { key: 'amount', header: 'Amount', align: 'right', render: (r) => fmtMoney(Number(r.amount)) },
+            { key: 'amount', header: 'Amount', align: 'right', render: (r) => fmtMoney(Number(r.amount), String(r.currency ?? 'IDR')) },
             { key: 'movementType', header: 'Mvmt', render: (r) => <Badge tone="neutral">{String(r.movementType)}</Badge> },
           ]}
           rows={data?.items ?? []}
@@ -193,7 +195,7 @@ function ReferenceBrowser() {
             { key: 'postingDate', header: 'Posting Date', render: (r) => fmtDate(String(r.postingDate)) },
             { key: 'serviceDescription', header: 'Service', render: (r) => <span className="block max-w-64 truncate text-xs">{String(r.serviceDescription)}</span> },
             { key: 'quantity', header: 'Qty', align: 'right', render: (r) => String(r.quantity) },
-            { key: 'acceptedAmount', header: 'Accepted', align: 'right', render: (r) => fmtMoney(Number(r.acceptedAmount)) },
+            { key: 'acceptedAmount', header: 'Accepted', align: 'right', render: (r) => fmtMoney(Number(r.acceptedAmount), String(r.currency ?? 'IDR')) },
             { key: 'status', header: 'Status', render: (r) => <StatusBadge value={String(r.status)} /> },
           ]}
           rows={data?.items ?? []}

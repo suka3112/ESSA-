@@ -51,6 +51,17 @@ function fieldValue(ctx: ValidationContext, docTypeCode: string | undefined, fie
   return { value: raw, detail: `From ${docTypeCode ?? 'document'} p.${f.page}` };
 }
 
+/** Reference numbers (GRN / SES) read from the invoice bundle, possibly several per field. */
+function referencedNumbers(ctx: ValidationContext, fieldCode: string): Set<string> {
+  const out = new Set<string>();
+  for (const f of ctx.fields) {
+    if (f.fieldCode !== fieldCode) continue;
+    const raw = f.value;
+    String(raw ?? '').split(/[,;\s]+/).map((v) => v.trim()).filter(Boolean).forEach((v) => out.add(v));
+  }
+  return out;
+}
+
 function sapValue(ctx: ValidationContext, op: RuleOperand): { value: string | number | null; detail?: string } {
   const db = getDb();
   const inv = ctx.invoice;
@@ -70,8 +81,14 @@ function sapValue(ctx: ValidationContext, op: RuleOperand): { value: string | nu
       }
     }
     case 'GRN': {
-      const grns = db.sapGrns.filter((g) => g.poNumber === inv.poNumber);
-      if (!grns.length) return { value: null, detail: 'No GRN found for PO' };
+      // A PO usually carries many receipts over its life. Match the receipt(s)
+      // the invoice actually references (GRN number read from the bundle);
+      // fall back to every receipt on the PO only when none is referenced.
+      const referenced = referencedNumbers(ctx, 'GRN_NUMBER');
+      const onPo = db.sapGrns.filter((g) => g.poNumber === inv.poNumber);
+      const matched = onPo.filter((g) => referenced.has(g.grnNumber));
+      const grns = matched.length ? matched : onPo;
+      if (!grns.length) return { value: null, detail: referenced.size ? `GRN ${[...referenced].join(', ')} not found in SAP` : 'No GRN found for PO' };
       if (op.aggregation === 'SUM' || !op.sapField || op.sapField === 'AMOUNT') {
         return { value: grns.reduce((s, g) => s + g.amount, 0), detail: `${grns.length} GRN(s)` };
       }
@@ -81,8 +98,11 @@ function sapValue(ctx: ValidationContext, op: RuleOperand): { value: string | nu
       return { value: grns[0].grnNumber, detail: `GRN ${grns[0].grnNumber}` };
     }
     case 'SES': {
-      const ses = db.sapSes.filter((s) => s.poNumber === inv.poNumber);
-      if (!ses.length) return { value: null, detail: 'No SES found for PO' };
+      const referenced = referencedNumbers(ctx, 'SES_NUMBER');
+      const onPo = db.sapSes.filter((s) => s.poNumber === inv.poNumber);
+      const matched = onPo.filter((s) => referenced.has(s.sesNumber));
+      const ses = matched.length ? matched : onPo;
+      if (!ses.length) return { value: null, detail: referenced.size ? `SES ${[...referenced].join(', ')} not found in SAP` : 'No SES found for PO' };
       if (op.sapField === 'QUANTITY') return { value: ses.reduce((sum, s) => sum + s.quantity, 0), detail: `${ses.length} SES` };
       return { value: ses.reduce((sum, s) => sum + s.acceptedAmount, 0), detail: `${ses.length} SES` };
     }
@@ -108,19 +128,24 @@ function sapValue(ctx: ValidationContext, op: RuleOperand): { value: string | nu
 function biometricValue(ctx: ValidationContext, op: RuleOperand): { value: string | number | null; detail?: string } {
   const db = getDb();
   const inv = ctx.invoice;
-  const month = inv.invoiceDate.slice(0, 7);
+  // The biometric period is the service period the invoice covers (claim
+  // periods such as 07 Mar – 06 Apr do not line up with calendar months);
+  // when the invoice does not state one, the invoice month is used.
+  const from = inv.servicePeriodFrom ?? inv.invoiceDate.slice(0, 7) + '-01';
+  const to = inv.servicePeriodTo ?? inv.invoiceDate.slice(0, 7) + '-31';
+  const periodLabel = inv.servicePeriodFrom ? `${from} – ${to}` : inv.invoiceDate.slice(0, 7);
   const records = db.attendanceRecords.filter(
-    (r) => r.vendorCode === inv.vendorCode && r.date.startsWith(month) && r.status === 'ACCEPTED'
+    (r) => r.vendorCode === inv.vendorCode && r.date >= from && r.date <= to && r.status === 'ACCEPTED'
   );
-  if (!records.length) return { value: null, detail: 'No attendance data pushed for period' };
+  if (!records.length) return { value: null, detail: `No attendance data pushed for ${periodLabel}` };
   switch (op.aggregation) {
     case 'COUNT':
-      return { value: records.filter((r) => r.present).length, detail: `${records.length} attendance records (${month})` };
+      return { value: records.filter((r) => r.present).length, detail: `${records.length} attendance records (${periodLabel})` };
     case 'SUM':
     default: {
       if (op.fieldCode === 'OT_HOURS') return { value: records.reduce((s, r) => s + r.otHours, 0), detail: `${records.length} records` };
       if (op.fieldCode === 'MEAL_COUNT') return { value: records.filter((r) => r.mealEligible && r.present).length, detail: `${records.length} records` };
-      return { value: records.reduce((s, r) => s + r.hours, 0), detail: `${records.length} attendance records (${month})` };
+      return { value: records.reduce((s, r) => s + r.hours, 0), detail: `${records.length} attendance records (${periodLabel})` };
     }
   }
 }
@@ -179,7 +204,7 @@ function outcomeFor(rule: ValidationRule, pass: boolean): RuleResultOutcome {
 
 function fmt(v: string | number | null): string {
   if (v == null) return '—';
-  if (typeof v === 'number') return v.toLocaleString('en-IN', { maximumFractionDigits: 2 });
+  if (typeof v === 'number') return v.toLocaleString('en-US', { maximumFractionDigits: 2 });
   return String(v);
 }
 

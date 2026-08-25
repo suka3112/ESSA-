@@ -44,7 +44,7 @@ export function OverviewTab({ detail }: { detail: InvoiceDetail }) {
             <dl className="grid grid-cols-2 gap-x-4 gap-y-3">
               <KeyValue label="Vendor">{detail.vendor.name}</KeyValue>
               <KeyValue label="Code">{detail.vendor.code}</KeyValue>
-              <KeyValue label="GSTIN">{detail.vendor.gstin}</KeyValue>
+              <KeyValue label="Tax Number (NPWP)">{detail.vendor.gstin}</KeyValue>
               <KeyValue label="Payment Terms">{detail.vendor.paymentTerms}</KeyValue>
               <KeyValue label="SAP Status"><StatusBadge value={detail.vendor.sapStatus} /></KeyValue>
               <KeyValue label="AP Control">
@@ -67,10 +67,10 @@ export function OverviewTab({ detail }: { detail: InvoiceDetail }) {
             <dl className="grid grid-cols-2 gap-x-4 gap-y-3">
               <KeyValue label="PO">{detail.sapReference.po.poNumber}</KeyValue>
               <KeyValue label="PO Status"><StatusBadge value={detail.sapReference.po.status} /></KeyValue>
-              <KeyValue label="PO Value">{fmtMoney(detail.sapReference.po.totalAmount)}</KeyValue>
-              <KeyValue label="Open Value">{fmtMoney(detail.sapReference.po.openAmount)}</KeyValue>
-              <KeyValue label="GRNs">{detail.sapReference.grns.length ? `${detail.sapReference.grns.length} · ${fmtMoney(detail.sapReference.grns.reduce((s, g) => s + g.amount, 0))}` : '—'}</KeyValue>
-              <KeyValue label="SES">{detail.sapReference.ses.length ? `${detail.sapReference.ses.length} · ${fmtMoney(detail.sapReference.ses.reduce((s, g) => s + g.amount, 0))}` : '—'}</KeyValue>
+              <KeyValue label="PO Value">{fmtMoney(detail.sapReference.po.totalAmount, detail.sapReference.po.currency)}</KeyValue>
+              <KeyValue label="Open Value">{fmtMoney(detail.sapReference.po.openAmount, detail.sapReference.po.currency)}</KeyValue>
+              <KeyValue label="GRNs">{detail.sapReference.grns.length ? `${detail.sapReference.grns.length} · ${fmtMoney(detail.sapReference.grns.reduce((s, g) => s + g.amount, 0), detail.sapReference.po.currency)}` : '—'}</KeyValue>
+              <KeyValue label="SES">{detail.sapReference.ses.length ? `${detail.sapReference.ses.length} · ${fmtMoney(detail.sapReference.ses.reduce((s, g) => s + g.amount, 0), detail.sapReference.po.currency)}` : '—'}</KeyValue>
             </dl>
           ) : (
             <p className="text-xs text-ink-muted">Non-PO invoice — there is no purchase order to validate against. It is routed through the approval hierarchy by invoice amount.</p>
@@ -84,7 +84,7 @@ export function OverviewTab({ detail }: { detail: InvoiceDetail }) {
           columns={[
             { key: 'lineNo', header: '#', render: (l) => l.lineNo },
             { key: 'description', header: 'Description', render: (l) => l.description },
-            { key: 'quantity', header: 'Qty', align: 'right', render: (l) => `${fmtNumber(l.quantity)} ${l.uom}` },
+            { key: 'quantity', header: 'Qty', align: 'right', render: (l) => `${fmtNumber(l.quantity, Number.isInteger(l.quantity) ? 0 : 1)} ${l.uom}` },
             { key: 'unitPrice', header: 'Unit Price', align: 'right', render: (l) => fmtNumber(l.unitPrice, 2) },
             { key: 'amount', header: 'Amount', align: 'right', render: (l) => <span className="font-medium">{fmtMoney(l.amount, inv.currency)}</span> },
             { key: 'poItem', header: 'PO Item', render: (l) => l.poItem ?? '—' },

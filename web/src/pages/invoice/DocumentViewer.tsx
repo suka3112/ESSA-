@@ -32,6 +32,9 @@ export function DocumentViewer({
   const doc = documents.find((d) => d.id === selectedId) ?? documents[0];
   const docFields = useMemo(() => fields.filter((f) => f.documentId === doc?.id), [fields, doc?.id]);
   const inv = detail.invoice;
+  const taxRate = inv.subtotal ? Math.round((inv.taxAmount / inv.subtotal) * 100) : 0;
+  const taxCode = detail.lines[0]?.taxCode;
+  const taxLabel = inv.currency !== 'IDR' ? 'Tax' : taxCode === 'PB1' ? `PB1 local tax (${taxRate}%)` : `PPN (${taxRate}%)`;
 
   if (!doc) {
     return (
@@ -83,6 +86,8 @@ export function DocumentViewer({
       </div>
 
       {/* synthetic page */}
+      {/* Tax line as the vendor prints it: PPN 11% on domestic invoices, PB1
+          local tax on catering (tax code PB1), none on a foreign USD invoice. */}
       <div className="flex-1 overflow-auto bg-line-soft/60 p-4 scrollbar-thin">
         <div
           className="mx-auto flex min-h-[540px] w-[420px] origin-top flex-col gap-3 rounded-sm border border-line bg-white p-6 shadow-card"
@@ -91,7 +96,7 @@ export function DocumentViewer({
           <div className="flex items-start justify-between border-b-2 border-essa-600 pb-3">
             <div>
               <p className="text-sm font-bold text-ink">{inv.vendorName}</p>
-              <p className="text-2xs text-ink-muted">Tax No. {detail.vendor?.gstin} · {detail.vendor?.city}</p>
+              <p className="text-2xs text-ink-muted">{[detail.vendor?.gstin ? (/^\d+$/.test(detail.vendor.gstin) ? `NPWP ${detail.vendor.gstin}` : detail.vendor.gstin) : null, detail.vendor?.city].filter(Boolean).join(' · ')}</p>
             </div>
             <p className="text-right text-2xs text-ink-muted">
               <span className="block text-xs font-bold uppercase text-essa-700">{doc.documentType?.name}</span>
@@ -130,7 +135,7 @@ export function DocumentViewer({
                 ))}
                 <div className="space-y-0.5 border-t border-line px-2 py-1.5 text-right text-2xs">
                   <p>Subtotal: <span className="font-medium">{fmtMoney(inv.subtotal, inv.currency)}</span></p>
-                  <p>GST (18%): <span className="font-medium">{fmtMoney(inv.taxAmount, inv.currency)}</span></p>
+                  <p>{taxLabel}: <span className="font-medium">{fmtMoney(inv.taxAmount, inv.currency)}</span></p>
                   <p className="text-xs font-bold text-ink">Total: {fmtMoney(inv.amount, inv.currency)}</p>
                 </div>
               </div>

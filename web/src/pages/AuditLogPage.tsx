@@ -17,11 +17,11 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Info, ListFilter, RotateCcw, Search, ShieldCheck } from 'lucide-react';
+import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, ChevronsUpDown, Info, ListFilter, RotateCcw, Search, ShieldCheck } from 'lucide-react';
 import clsx from 'clsx';
 import { api, qs } from '@/lib/api';
 import { displayRole, fmtDate, fmtDateTime, fmtNumber } from '@/lib/format';
-import { Badge, Button, Card, Input, LoadingState, NoResults, PageHeader, Pagination, Select } from '@/components/ui';
+import { Badge, Button, Card, Input, LoadingState, NoResults, PageHeader, Pagination, Select, nextSortDir } from '@/components/ui';
 
 interface AuditDetail { label: string; value: string }
 
@@ -246,11 +246,25 @@ export default function AuditLogPage() {
   const dirty = FILTER_KEYS.some((k) => draft[k] !== applied[k]);
   const hasFilters = FILTER_KEYS.some((k) => applied[k]) || dirty;
 
-  const sortDir = params.get('sortDir') ?? 'desc';
+  /**
+   * Three-state timestamp header (review, 25 Aug): ascending, descending, then
+   * off — and off is the log's own order, which is newest first.
+   */
+  const sortDir = (params.get('sortDir') as 'asc' | 'desc' | null) ?? undefined;
+  const sortBy = params.get('sortBy') ?? undefined;
+  const nextTimeSort = nextSortDir(sortBy, sortDir, 'eventTime');
+  const timeSortHint = nextTimeSort
+    ? `Sort by timestamp, ${nextTimeSort === 'asc' ? 'oldest first' : 'newest first'}`
+    : 'Stop sorting by timestamp';
   const toggleTimeSort = () => {
     const next = new URLSearchParams(params);
-    next.set('sortBy', 'eventTime');
-    next.set('sortDir', sortDir === 'asc' ? 'desc' : 'asc');
+    if (nextTimeSort) {
+      next.set('sortBy', 'eventTime');
+      next.set('sortDir', nextTimeSort);
+    } else {
+      next.delete('sortBy');
+      next.delete('sortDir');
+    }
     next.delete('page');
     setParams(next, { replace: true });
   };
@@ -339,12 +353,17 @@ export default function AuditLogPage() {
               <thead>
                 <tr className="bg-essa-600 text-white">
                   <th className="w-8 px-2 py-2" aria-label="Expand" />
-                  <th className="whitespace-nowrap px-3 py-2 text-xs font-bold" aria-sort={sortDir === 'asc' ? 'ascending' : 'descending'}>
-                    <button onClick={toggleTimeSort} className="inline-flex items-center gap-1.5 hover:underline" aria-label="Sort by timestamp">
+                  <th
+                    className="whitespace-nowrap px-3 py-2 text-xs font-bold"
+                    aria-sort={sortBy === 'eventTime' ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
+                  >
+                    <button onClick={toggleTimeSort} className="inline-flex items-center gap-1.5 hover:underline" aria-label={timeSortHint} title={timeSortHint}>
                       Timestamp
-                      {sortDir === 'asc'
-                        ? <ArrowUp size={13} className="shrink-0 text-white" aria-hidden />
-                        : <ArrowDown size={13} className="shrink-0 text-white" aria-hidden />}
+                      {sortBy !== 'eventTime'
+                        ? <ChevronsUpDown size={13} className="shrink-0 text-white/75" aria-hidden />
+                        : sortDir === 'asc'
+                          ? <ArrowUp size={13} className="shrink-0 text-white" aria-hidden />
+                          : <ArrowDown size={13} className="shrink-0 text-white" aria-hidden />}
                     </button>
                   </th>
                   <th className="whitespace-nowrap px-3 py-2 text-xs font-bold">Object Type</th>

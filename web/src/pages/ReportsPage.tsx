@@ -11,16 +11,17 @@ interface ReportData {
   totals: { invoices: number; amount: number; exceptions: number; exceptionRate: number; validationRuns: number; validationPassRate: number; avgConfidence: number | null; posted: number; paid: number; approvalsCompleted: number; approvalsOnTime: number };
   monthly: { month: string; count: number; amount: number }[];
   byLifecycle: Record<string, number>;
+  byStatus: Record<string, number>;
   byCategory: Record<string, { count: number; amount: number }>;
   exceptionsByType: Record<string, number>;
   vendorPerformance: { code: string; name: string; count: number; amount: number; exceptions: number; exceptionRate: number }[];
 }
 
-const LIFECYCLE_ORDER = ['DRAFT', 'VALIDATED', 'IN_PROGRESS', 'PARKED', 'POSTED', 'PAID'];
+const STATUS_ORDER = ['Draft', 'Validation', 'Approval Pending', 'Approved', 'Parked', 'Posted', 'Paid', 'Rejected', 'Failed', 'Cancelled'];
 
 const fmtMonth = (m: string) => {
   const [y, mo] = m.split('-');
-  return new Date(Number(y), Number(mo) - 1, 1).toLocaleDateString('en-IN', { month: 'short', year: '2-digit' });
+  return new Date(Number(y), Number(mo) - 1, 1).toLocaleDateString('en-GB', { month: 'short', year: '2-digit' });
 };
 
 /** Compact labelled filter control. */
@@ -61,8 +62,8 @@ export default function ReportsPage() {
   const t = data.totals;
   const onTimePct = t.approvalsCompleted ? Math.round((t.approvalsOnTime / t.approvalsCompleted) * 100) : null;
 
-  const lifecycleData = LIFECYCLE_ORDER.filter((k) => data.byLifecycle[k] != null)
-    .map((k) => ({ key: k, name: titleCase(k), value: data.byLifecycle[k] }));
+  const lifecycleData = STATUS_ORDER.filter((k) => data.byStatus?.[k])
+    .map((k) => ({ key: k, name: k, value: data.byStatus[k] }));
   const lifecycleTotal = lifecycleData.reduce((s, d) => s + d.value, 0) || 1;
   const lifecycleMax = Math.max(...lifecycleData.map((d) => d.value), 1);
 
@@ -156,7 +157,7 @@ export default function ReportsPage() {
                 <CartesianGrid strokeDasharray="3 3" stroke="#eef0f2" vertical={false} />
                 <XAxis dataKey="month" tick={{ fontSize: 10 }} tickFormatter={fmtMonth} tickMargin={6} />
                 <YAxis yAxisId="l" tick={{ fontSize: 10 }} allowDecimals={false} />
-                <YAxis yAxisId="r" orientation="right" tick={{ fontSize: 10 }} tickFormatter={(v: number) => `${Math.round(v / 100000)}L`} />
+                <YAxis yAxisId="r" orientation="right" tick={{ fontSize: 10 }} tickFormatter={(v: number) => (v >= 1e9 ? `${(v / 1e9).toFixed(v % 1e9 ? 1 : 0)} bn` : `${Math.round(v / 1e6)} m`)} />
                 <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} labelFormatter={(v) => fmtMonth(String(v))} formatter={(v: number, n: string) => (n === 'Value' ? fmtMoney(v) : v)} />
                 <Bar yAxisId="l" dataKey="count" name="Invoices" fill="#1f7a41" radius={[3, 3, 0, 0]} barSize={22} />
                 <Bar yAxisId="r" dataKey="amount" name="Value" fill="#a7d6b8" radius={[3, 3, 0, 0]} barSize={22} />
@@ -166,7 +167,7 @@ export default function ReportsPage() {
           </div>
           <p className="mt-2 flex items-center gap-4 border-t border-line-soft pt-2 text-2xs text-ink-muted">
             <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-essa-600" /> Invoices (count)</span>
-            <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-essa-200" /> Value (₹ lakh)</span>
+            <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-essa-200" /> Value (IDR, USD invoices at the NDPBM rate)</span>
           </p>
         </Card>
 

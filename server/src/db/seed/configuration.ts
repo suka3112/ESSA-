@@ -47,10 +47,11 @@ export const DOCUMENT_TYPES: DocumentType[] = [
   { id: 'dt-manhour', code: 'MANHOUR_SUMMARY', name: 'Manhour Summary', purpose: 'Summary of hours worked by resource', defaultExtractionMode: 'EXTRACT_AND_VALIDATE', active: true },
   { id: 'dt-attendance', code: 'ATTENDANCE_SHEET', name: 'Attendance Sheet', purpose: 'Attendance of resources on site', defaultExtractionMode: 'AVAILABILITY_ONLY', active: true },
   { id: 'dt-meal', code: 'MEAL_SUMMARY', name: 'Meal Summary', purpose: 'Daily/monthly meal count summary for catering', defaultExtractionMode: 'EXTRACT_AND_VALIDATE', active: true },
-  { id: 'dt-tax', code: 'TAX_INVOICE', name: 'Tax Document', purpose: 'Tax invoice (Faktur Pajak) copy', defaultExtractionMode: 'AVAILABILITY_ONLY', active: true },
-  { id: 'dt-challan', code: 'DELIVERY_CHALLAN', name: 'Delivery Challan', purpose: 'Delivery evidence accompanying material shipments', defaultExtractionMode: 'AVAILABILITY_ONLY', active: true },
+  { id: 'dt-tax', code: 'TAX_INVOICE', name: 'Tax Invoice (Faktur Pajak)', purpose: 'e-Faktur issued by a domestic PKP vendor; not applicable to imports, which are covered by the PIB', defaultExtractionMode: 'AVAILABILITY_ONLY', active: true },
+  { id: 'dt-challan', code: 'DELIVERY_CHALLAN', name: 'Delivery Document (BL / AWB / Delivery Note)', purpose: 'Delivery evidence accompanying material shipments — bill of lading, airway bill, packing list or delivery note', defaultExtractionMode: 'AVAILABILITY_ONLY', active: true },
+  { id: 'dt-wpc', code: 'PROGRESS_CERTIFICATE', name: 'Work Progress Certificate (Berita Acara)', purpose: 'Signed progress certificate backing a contractor progress claim', defaultExtractionMode: 'EXTRACT_AND_VALIDATE', active: true },
   { id: 'dt-support', code: 'SUPPORTING_DOC', name: 'Supporting Document', purpose: 'Other supporting documents (optional)', defaultExtractionMode: 'AVAILABILITY_ONLY', active: true },
-  { id: 'dt-dept', code: 'HCIS_CLEARING', name: 'HCIS Clearing Journal', purpose: 'HCIS / Darwinbox clearing journal backing a Non-PO invoice (BPD §10.5)', defaultExtractionMode: 'AVAILABILITY_ONLY', active: true },
+  { id: 'dt-dept', code: 'HCIS_CLEARING', name: 'HCIS Clearing Journal', purpose: 'HCIS / Darwinbox clearing journal (travel or expense request clearance) backing a Non-PO invoice (BPD §10.5)', defaultExtractionMode: 'AVAILABILITY_ONLY', active: true },
 ];
 
 const cd = (
@@ -64,43 +65,58 @@ const cd = (
   availabilityCheckRequired: true,
   allowMultiple: opts.allowMultiple ?? false,
   missingSeverity: opts.missingSeverity ?? (requirementType === 'MANDATORY' ? 'ERROR' : 'WARNING'),
-  blocking: opts.blocking ?? requirementType === 'MANDATORY',
+  // A conditional document blocks like a mandatory one when its condition applies.
+  blocking: opts.blocking ?? requirementType !== 'OPTIONAL',
   overrideAllowed: opts.overrideAllowed ?? requirementType !== 'MANDATORY',
   sequence: seq,
   active: true,
   condition: opts.condition,
+  conditionRule: opts.conditionRule,
 });
 
 export const CATEGORY_DOCUMENTS: CategoryDocument[] = [
-  // Material
+  // Material — PO / GRN backed goods, including imports (Emerson bundle:
+  // commercial invoice, PO, GRN, bill of lading + packing list, PIB billing).
   cd('cdoc-m1', 'cat-material', 'dt-invoice', 'MANDATORY', 'EXTRACT_AND_VALIDATE', 1),
   cd('cdoc-m2', 'cat-material', 'dt-po', 'MANDATORY', 'EXTRACT_AND_VALIDATE', 2, { allowMultiple: true }),
   cd('cdoc-m3', 'cat-material', 'dt-grn', 'MANDATORY', 'EXTRACT_ONLY', 3, { allowMultiple: true }),
   cd('cdoc-m4', 'cat-material', 'dt-challan', 'OPTIONAL', 'AVAILABILITY_ONLY', 4, { allowMultiple: true }),
-  cd('cdoc-m5', 'cat-material', 'dt-tax', 'MANDATORY', 'AVAILABILITY_ONLY', 5),
+  cd('cdoc-m5', 'cat-material', 'dt-tax', 'CONDITIONAL', 'AVAILABILITY_ONLY', 5, { condition: 'Domestic (PKP) vendors only — imports are covered by the PIB', conditionRule: 'DOMESTIC_VENDOR' }),
   cd('cdoc-m6', 'cat-material', 'dt-support', 'OPTIONAL', 'AVAILABILITY_ONLY', 6, { allowMultiple: true }),
-  // Service
+  // Service — PO / SES backed services and contractor progress claims (Berca,
+  // Baasithu camp maintenance bundles).
   cd('cdoc-s1', 'cat-service', 'dt-invoice', 'MANDATORY', 'EXTRACT_AND_VALIDATE', 1),
   cd('cdoc-s2', 'cat-service', 'dt-po', 'MANDATORY', 'EXTRACT_AND_VALIDATE', 2),
   cd('cdoc-s3', 'cat-service', 'dt-ses', 'MANDATORY', 'EXTRACT_AND_VALIDATE', 3, { allowMultiple: true }),
-  cd('cdoc-s4', 'cat-service', 'dt-attendance', 'CONDITIONAL', 'AVAILABILITY_ONLY', 4, { condition: 'On-site services (PO-based)' }),
-  cd('cdoc-s5', 'cat-service', 'dt-support', 'OPTIONAL', 'AVAILABILITY_ONLY', 5, { allowMultiple: true }),
-  // Manpower
+  cd('cdoc-s4', 'cat-service', 'dt-tax', 'CONDITIONAL', 'AVAILABILITY_ONLY', 4, { condition: 'Domestic (PKP) vendors only', conditionRule: 'DOMESTIC_VENDOR' }),
+  cd('cdoc-s5', 'cat-service', 'dt-wpc', 'OPTIONAL', 'EXTRACT_AND_VALIDATE', 5, { condition: 'Contractor progress claims' }),
+  cd('cdoc-s6', 'cat-service', 'dt-attendance', 'OPTIONAL', 'AVAILABILITY_ONLY', 6, { condition: 'On-site services' }),
+  cd('cdoc-s7', 'cat-service', 'dt-support', 'OPTIONAL', 'AVAILABILITY_ONLY', 7, { allowMultiple: true }),
+  // Manpower — timesheets, manhour summary, signed daily time sheets, SES
+  // (Amanah Lestari Energy bundle).
   cd('cdoc-p1', 'cat-manpower', 'dt-invoice', 'MANDATORY', 'EXTRACT_AND_VALIDATE', 1),
   cd('cdoc-p2', 'cat-manpower', 'dt-po', 'MANDATORY', 'EXTRACT_AND_VALIDATE', 2),
   cd('cdoc-p3', 'cat-manpower', 'dt-timesheet', 'MANDATORY', 'EXTRACT_AND_VALIDATE', 3, { allowMultiple: true }),
   cd('cdoc-p4', 'cat-manpower', 'dt-manhour', 'MANDATORY', 'EXTRACT_AND_VALIDATE', 4),
   cd('cdoc-p5', 'cat-manpower', 'dt-attendance', 'MANDATORY', 'AVAILABILITY_ONLY', 5),
   cd('cdoc-p6', 'cat-manpower', 'dt-ses', 'MANDATORY', 'EXTRACT_AND_VALIDATE', 6),
-  // Catering
+  cd('cdoc-p7', 'cat-manpower', 'dt-tax', 'MANDATORY', 'AVAILABILITY_ONLY', 7),
+  cd('cdoc-p8', 'cat-manpower', 'dt-support', 'OPTIONAL', 'AVAILABILITY_ONLY', 8, { allowMultiple: true }),
+  // Catering — proforma invoice, meal summary, face-ID meal attendance, SES
+  // (Baasithu catering bundle). Catering carries local restaurant tax, not VAT.
   cd('cdoc-c1', 'cat-catering', 'dt-invoice', 'MANDATORY', 'EXTRACT_AND_VALIDATE', 1),
   cd('cdoc-c2', 'cat-catering', 'dt-po', 'MANDATORY', 'EXTRACT_AND_VALIDATE', 2),
   cd('cdoc-c3', 'cat-catering', 'dt-meal', 'MANDATORY', 'EXTRACT_AND_VALIDATE', 3),
   cd('cdoc-c4', 'cat-catering', 'dt-attendance', 'MANDATORY', 'AVAILABILITY_ONLY', 4),
-  // Non-PO
+  cd('cdoc-c5', 'cat-catering', 'dt-ses', 'MANDATORY', 'EXTRACT_AND_VALIDATE', 5, { allowMultiple: true }),
+  cd('cdoc-c6', 'cat-catering', 'dt-wpc', 'OPTIONAL', 'AVAILABILITY_ONLY', 6),
+  cd('cdoc-c7', 'cat-catering', 'dt-tax', 'OPTIONAL', 'AVAILABILITY_ONLY', 7),
+  // Non-PO — invoice, e-Faktur, HCIS clearing (travel / expense request) and
+  // the agent's billing statement (Wisata Kawan bundle).
   cd('cdoc-n1', 'cat-nonpo', 'dt-invoice', 'MANDATORY', 'EXTRACT_AND_VALIDATE', 1),
   cd('cdoc-n2', 'cat-nonpo', 'dt-dept', 'MANDATORY', 'AVAILABILITY_ONLY', 2),
-  cd('cdoc-n3', 'cat-nonpo', 'dt-support', 'OPTIONAL', 'AVAILABILITY_ONLY', 3, { allowMultiple: true }),
+  cd('cdoc-n3', 'cat-nonpo', 'dt-tax', 'CONDITIONAL', 'AVAILABILITY_ONLY', 3, { condition: 'Domestic (PKP) vendors only', conditionRule: 'DOMESTIC_VENDOR' }),
+  cd('cdoc-n4', 'cat-nonpo', 'dt-support', 'OPTIONAL', 'AVAILABILITY_ONLY', 4, { allowMultiple: true }),
 ];
 
 // ---------------- fields ----------------
@@ -146,11 +162,16 @@ export const DOCUMENT_FIELDS: DocumentField[] = [
   fld('cat-material', 'dt-grn', 'QUANTITY', 'Received Quantity', 'NUMBER', true),
 
   ...invoiceHeaderFields('cat-service', true),
+  // Progress claims net advance-payment recovery and retention off the work
+  // value; the SES is matched against the gross work value, not the net.
+  fld('cat-service', 'dt-invoice', 'INVOICE_GROSS_VALUE', 'Work Value (before advance recovery / retention)', 'CURRENCY', true),
   fld('cat-service', 'dt-po', 'PO_NUMBER', 'PO Number', 'CODE', true, { sapMapped: true }),
   fld('cat-service', 'dt-ses', 'SES_NUMBER', 'SES Number', 'CODE', true, { sapMapped: true }),
-  fld('cat-service', 'dt-ses', 'QUANTITY', 'Service Quantity', 'NUMBER', true),
+  fld('cat-service', 'dt-ses', 'SES_VALUE', 'SES Accepted Value', 'CURRENCY', true),
   fld('cat-service', 'dt-ses', 'PERIOD_FROM', 'Service Period From', 'DATE', false),
   fld('cat-service', 'dt-ses', 'PERIOD_TO', 'Service Period To', 'DATE', false),
+  fld('cat-service', 'dt-wpc', 'PROGRESS_PCT', 'Progress This Period (%)', 'NUMBER', false),
+  fld('cat-service', 'dt-wpc', 'CUMULATIVE_PCT', 'Cumulative Progress (%)', 'NUMBER', false),
 
   ...invoiceHeaderFields('cat-manpower', true),
   fld('cat-manpower', 'dt-po', 'PO_NUMBER', 'PO Number', 'CODE', true, { sapMapped: true }),
@@ -160,6 +181,7 @@ export const DOCUMENT_FIELDS: DocumentField[] = [
   fld('cat-manpower', 'dt-manhour', 'OT_HOURS', 'Overtime Hours', 'NUMBER', false),
   fld('cat-manpower', 'dt-ses', 'SES_NUMBER', 'SES Number', 'CODE', true, { sapMapped: true }),
   fld('cat-manpower', 'dt-ses', 'QUANTITY', 'Accepted Manhours', 'NUMBER', true),
+  fld('cat-manpower', 'dt-ses', 'SES_VALUE', 'SES Accepted Value', 'CURRENCY', true),
 
   ...invoiceHeaderFields('cat-catering', true),
   fld('cat-catering', 'dt-po', 'PO_NUMBER', 'PO Number', 'CODE', true, { sapMapped: true }),
@@ -167,9 +189,11 @@ export const DOCUMENT_FIELDS: DocumentField[] = [
   fld('cat-catering', 'dt-meal', 'UNIT_RATE', 'Rate per Meal', 'CURRENCY', true),
   fld('cat-catering', 'dt-meal', 'PERIOD_FROM', 'Period From', 'DATE', false),
   fld('cat-catering', 'dt-meal', 'PERIOD_TO', 'Period To', 'DATE', false),
+  fld('cat-catering', 'dt-ses', 'SES_NUMBER', 'SES Number', 'CODE', true, { sapMapped: true }),
+  fld('cat-catering', 'dt-ses', 'SES_VALUE', 'SES Accepted Value', 'CURRENCY', true),
 
   ...invoiceHeaderFields('cat-nonpo', false),
-  fld('cat-nonpo', 'dt-invoice', 'COST_CENTER', 'Cost Centre', 'TEXT', true),
+  fld('cat-nonpo', 'dt-invoice', 'COST_CENTER', 'Cost Centre / Request Reference', 'TEXT', true),
 ];
 
 // ---------------- prompts & profiles ----------------
@@ -323,10 +347,11 @@ const RULE_SPECS: RuleSpec[] = [
   },
   // ---- Service ----
   {
-    rule: { id: 'rule-srv-001', ruleCode: 'R-SRV-001', ruleName: '3-way match: Invoice = PO = SES', description: 'Invoice subtotal must reconcile with accepted SES value within 2%.', scope: 'CROSS_DOCUMENT', categoryId: 'cat-service', ruleType: 'N_WAY', comparator: 'DIFF_WITHIN_TOLERANCE', toleranceType: 'PERCENT', toleranceValue: 2, severity: 'ERROR', blocking: true, overrideAllowed: true, overrideRole: 'AP_REVIEWER', priority: 30 },
+    rule: { id: 'rule-srv-001', ruleCode: 'R-SRV-001', ruleName: '3-way match: Invoice = PO = SES', description: 'The invoiced work value (before advance recovery and retention) must reconcile with the accepted SES value in SAP within 2%.', scope: 'CROSS_DOCUMENT', categoryId: 'cat-service', ruleType: 'N_WAY', comparator: 'DIFF_WITHIN_TOLERANCE', toleranceType: 'PERCENT', toleranceValue: 2, severity: 'ERROR', blocking: true, overrideAllowed: true, overrideRole: 'AP_REVIEWER', priority: 30 },
     operands: [
-      op('A', 'Invoice Subtotal', 'DOCUMENT_FIELD', { documentTypeCode: 'INVOICE', fieldCode: 'INVOICE_SUBTOTAL', sequence: 1 }),
-      op('B', 'SES Accepted Value (SUM)', 'SAP', { sapEntity: 'SES', sapField: 'AMOUNT', aggregation: 'SUM', sequence: 2 }),
+      op('A', 'Invoice Work Value', 'DOCUMENT_FIELD', { documentTypeCode: 'INVOICE', fieldCode: 'INVOICE_GROSS_VALUE', sequence: 1 }),
+      op('B', 'SES Value on Document', 'DOCUMENT_FIELD', { documentTypeCode: 'SES', fieldCode: 'SES_VALUE', sequence: 2 }),
+      op('C', 'SES Accepted Value in SAP (SUM)', 'SAP', { sapEntity: 'SES', sapField: 'AMOUNT', aggregation: 'SUM', sequence: 3 }),
     ],
   },
   {
@@ -337,7 +362,7 @@ const RULE_SPECS: RuleSpec[] = [
     ],
   },
   {
-    rule: { id: 'rule-srv-003', ruleCode: 'R-SRV-003', ruleName: 'SES posted within invoice period', description: 'SES posting date should fall within 30 days of the invoice date.', scope: 'CATEGORY', categoryId: 'cat-service', ruleType: 'DATE_TOLERANCE', toleranceType: 'DAYS', toleranceValue: 30, severity: 'WARNING', blocking: false, overrideAllowed: true, overrideRole: 'AP_REVIEWER', priority: 32 },
+    rule: { id: 'rule-srv-003', ruleCode: 'R-SRV-003', ruleName: 'SES posted within invoice period', description: 'SES posting date should fall within 90 days of the invoice date (progress claims are certified up to two months before the invoice is issued).', scope: 'CATEGORY', categoryId: 'cat-service', ruleType: 'DATE_TOLERANCE', toleranceType: 'DAYS', toleranceValue: 90, severity: 'WARNING', blocking: false, overrideAllowed: true, overrideRole: 'AP_REVIEWER', priority: 32 },
     operands: [
       op('A', 'Invoice Date', 'DOCUMENT_FIELD', { documentTypeCode: 'INVOICE', fieldCode: 'INVOICE_DATE', sequence: 1 }),
       op('B', 'SES Period To', 'DOCUMENT_FIELD', { documentTypeCode: 'SES', fieldCode: 'PERIOD_TO', sequence: 2 }),
@@ -383,17 +408,24 @@ const RULE_SPECS: RuleSpec[] = [
       op('SUBTOTAL', 'Invoice Subtotal', 'DOCUMENT_FIELD', { documentTypeCode: 'INVOICE', fieldCode: 'INVOICE_SUBTOTAL', sequence: 3 }),
     ],
   },
+  {
+    rule: { id: 'rule-cat-003', ruleCode: 'R-CAT-003', ruleName: '3-way match: Invoice = SES', description: 'Catering invoice subtotal must reconcile with the accepted SES value in SAP within 2%.', scope: 'CROSS_DOCUMENT', categoryId: 'cat-catering', ruleType: 'N_WAY', comparator: 'DIFF_WITHIN_TOLERANCE', toleranceType: 'PERCENT', toleranceValue: 2, severity: 'ERROR', blocking: true, overrideAllowed: true, overrideRole: 'AP_REVIEWER', priority: 52 },
+    operands: [
+      op('A', 'Invoice Subtotal', 'DOCUMENT_FIELD', { documentTypeCode: 'INVOICE', fieldCode: 'INVOICE_SUBTOTAL', sequence: 1 }),
+      op('B', 'SES Accepted Value in SAP (SUM)', 'SAP', { sapEntity: 'SES', sapField: 'AMOUNT', aggregation: 'SUM', sequence: 2 }),
+    ],
+  },
   // ---- Non-PO ----
   {
     rule: { id: 'rule-npo-001', ruleCode: 'R-NPO-001', ruleName: 'HCIS clearing reference captured', description: 'Non-PO invoices must carry the HCIS clearing reference so the approval hierarchy can route them.', scope: 'CATEGORY', categoryId: 'cat-nonpo', ruleType: 'PRESENCE', severity: 'ERROR', blocking: true, overrideAllowed: false, priority: 60 },
     operands: [op('A', 'Cost Centre', 'DOCUMENT_FIELD', { documentTypeCode: 'INVOICE', fieldCode: 'COST_CENTER', sequence: 1 })],
   },
   {
-    rule: { id: 'rule-npo-002', ruleCode: 'R-NPO-002', ruleName: 'Non-PO amount within policy limit', description: 'Non-PO invoices above IDR 2,500,000 require special procurement approval.', scope: 'CATEGORY', categoryId: 'cat-nonpo', ruleType: 'RANGE', severity: 'WARNING', blocking: false, overrideAllowed: true, overrideRole: 'AP_REVIEWER', priority: 61 },
+    rule: { id: 'rule-npo-002', ruleCode: 'R-NPO-002', ruleName: 'Non-PO amount within policy limit', description: 'Non-PO invoices above IDR 1,000,000,000 are flagged for procurement review of the direct-purchase policy (travel-agent billing statements normally run to IDR 300–550 million).', scope: 'CATEGORY', categoryId: 'cat-nonpo', ruleType: 'RANGE', severity: 'WARNING', blocking: false, overrideAllowed: true, overrideRole: 'AP_REVIEWER', priority: 61 },
     operands: [
       op('A', 'Invoice Amount', 'DOCUMENT_FIELD', { documentTypeCode: 'INVOICE', fieldCode: 'INVOICE_AMOUNT', sequence: 1 }),
       op('MIN', 'Minimum', 'CONFIG', { constantValue: 0, sequence: 2 }),
-      op('MAX', 'Policy Limit', 'CONFIG', { constantValue: 2500000, sequence: 3 }),
+      op('MAX', 'Policy Limit', 'CONFIG', { constantValue: 1000000000, sequence: 3 }),
     ],
   },
 ];
@@ -419,7 +451,7 @@ export const WORKFLOW_DEFINITIONS: WorkflowDefinition[] = [
       { stepNo: 1, name: 'AP Review', role: 'AP_REVIEWER', approverType: 'ROLE', slaHours: 24, notify: true },
       { stepNo: 2, name: 'Finance Exception Approval', role: 'AP_REVIEWER', approverType: 'ROLE', slaHours: 48, notify: true, escalationTo: 'AP_REVIEWER' },
       { stepNo: 3, name: 'Tax Review', role: 'TAX_REVIEWER', approverType: 'ROLE', taxStep: true, slaHours: 24, notify: true },
-      { stepNo: 4, name: 'Final Approval', role: 'AP_REVIEWER', approverType: 'ROLE', amountThresholdMin: 2_500_000, slaHours: 24, notify: true },
+      { stepNo: 4, name: 'Final Approval', role: 'AP_REVIEWER', approverType: 'ROLE', amountThresholdMin: 1_000_000_000, slaHours: 24, notify: true },
     ],
   },
   {
@@ -430,7 +462,7 @@ export const WORKFLOW_DEFINITIONS: WorkflowDefinition[] = [
       { stepNo: 1, name: 'AP Review', role: 'AP_REVIEWER', approverType: 'ROLE', slaHours: 24, notify: true },
       { stepNo: 2, name: 'Approval Hierarchy', role: 'AP_REVIEWER', approverType: 'DOA', slaHours: 48, notify: true, escalationTo: 'AP_REVIEWER' },
       { stepNo: 3, name: 'Tax Review', role: 'TAX_REVIEWER', approverType: 'ROLE', taxStep: true, slaHours: 24, notify: true },
-      { stepNo: 4, name: 'Final Approval', role: 'AP_REVIEWER', approverType: 'ROLE', amountThresholdMin: 1_000_000, slaHours: 24, notify: true },
+      { stepNo: 4, name: 'Final Approval', role: 'AP_REVIEWER', approverType: 'ROLE', amountThresholdMin: 100_000_000, slaHours: 24, notify: true },
     ],
   },
 ];
@@ -439,11 +471,11 @@ export const NOTIFICATION_RULES: NotificationRule[] = [
   { id: 'nr-1', configVersionId: 'cfg-1', event: 'INVOICE_RECEIVED', label: 'Invoice received', channels: ['IN_APP'], recipients: 'AP Team', template: 'Invoice {invoiceNumber} received from {vendor} via {source}.', active: true },
   { id: 'nr-2', configVersionId: 'cfg-1', event: 'EXCEPTION_CREATED', label: 'Exception created', channels: ['IN_APP', 'EMAIL'], recipients: 'AP Team', template: 'Exception {code} raised on {invoiceNumber}: {title}.', active: true },
   { id: 'nr-3', configVersionId: 'cfg-1', event: 'APPROVAL_REQUESTED', label: 'Approval requested', channels: ['IN_APP', 'TEAMS', 'EMAIL'], recipients: 'Current approver', template: 'Approval requested for {invoiceNumber} ({amount}).', active: true },
-  { id: 'nr-4', configVersionId: 'cfg-1', event: 'APPROVAL_OVERDUE', label: 'Approval overdue', channels: ['IN_APP', 'TEAMS'], recipients: 'Approver + escalation', template: 'Approval for {invoiceNumber} is overdue (SLA {sla}h).', active: true },
+  { id: 'nr-4', configVersionId: 'cfg-1', event: 'APPROVAL_OVERDUE', label: 'Approval overdue', channels: ['IN_APP', 'TEAMS'], recipients: 'Approver, escalation', template: 'Approval for {invoiceNumber} is overdue (SLA {sla}h).', active: true },
   { id: 'nr-5', configVersionId: 'cfg-1', event: 'INVOICE_APPROVED', label: 'Invoice approved', channels: ['IN_APP'], recipients: 'AP Team', template: '{invoiceNumber} fully approved and queued for SAP handoff.', active: true },
-  { id: 'nr-6', configVersionId: 'cfg-1', event: 'INVOICE_REJECTED', label: 'Invoice rejected', channels: ['IN_APP', 'EMAIL'], recipients: 'AP Team + requester', template: '{invoiceNumber} rejected at {step}: {reason}.', active: true },
-  { id: 'nr-7', configVersionId: 'cfg-1', event: 'SAP_FAILURE', label: 'SAP integration failure', channels: ['IN_APP', 'EMAIL'], recipients: 'Support + AP Supervisor', template: 'SAP handoff for {invoiceNumber} failed: {error}.', active: true },
+  { id: 'nr-6', configVersionId: 'cfg-1', event: 'INVOICE_REJECTED', label: 'Invoice rejected', channels: ['IN_APP', 'EMAIL'], recipients: 'AP Team, requester', template: '{invoiceNumber} rejected at {step}: {reason}.', active: true },
+  { id: 'nr-7', configVersionId: 'cfg-1', event: 'SAP_FAILURE', label: 'SAP integration failure', channels: ['IN_APP', 'EMAIL'], recipients: 'Support, AP Supervisor', template: 'SAP handoff for {invoiceNumber} failed: {error}.', active: true },
   { id: 'nr-8', configVersionId: 'cfg-1', event: 'SAP_POSTED', label: 'Invoice posted', channels: ['IN_APP'], recipients: 'AP Team', template: '{invoiceNumber} posted in SAP as {sapDocumentNo}.', active: true },
   { id: 'nr-9', configVersionId: 'cfg-1', event: 'INVOICE_PAID', label: 'Invoice paid', channels: ['IN_APP', 'EMAIL'], recipients: 'Vendor communication queue', template: 'Payment released for {invoiceNumber} ({paymentRef}).', active: true },
-  { id: 'nr-10', configVersionId: 'cfg-1', event: 'CONFIG_PUBLISHED', label: 'Configuration published', channels: ['IN_APP', 'EMAIL'], recipients: 'Administrators + AP Supervisor', template: 'Configuration {version} published, effective {effectiveFrom}.', active: true },
+  { id: 'nr-10', configVersionId: 'cfg-1', event: 'CONFIG_PUBLISHED', label: 'Configuration published', channels: ['IN_APP', 'EMAIL'], recipients: 'Administrators, AP Supervisor', template: 'Configuration {version} published, effective {effectiveFrom}.', active: true },
 ];

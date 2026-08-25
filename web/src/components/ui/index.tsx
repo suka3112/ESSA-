@@ -389,6 +389,9 @@ export interface Column<T> {
  * The sort indicator sits on the solid green header, so it is drawn as a real
  * icon in white rather than a faint text glyph — visible whether or not the
  * column is the one being sorted (review, 24 Aug).
+ *
+ * Three states (review, 25 Aug): the double chevron means the column is not
+ * sorting, and is what the header returns to on the third click.
  */
 function SortIcon({ active, dir }: { active: boolean; dir?: 'asc' | 'desc' }) {
   if (!active) return <ChevronsUpDown size={12} className="shrink-0 text-white/75" aria-hidden />;
@@ -396,6 +399,23 @@ function SortIcon({ active, dir }: { active: boolean; dir?: 'asc' | 'desc' }) {
     ? <ArrowUp size={12} className="shrink-0 text-white" aria-hidden />
     : <ArrowDown size={12} className="shrink-0 text-white" aria-hidden />;
 }
+
+/**
+ * Ascending → descending → off. Clicking a different column always starts that
+ * column at ascending.
+ */
+export function nextSortDir(
+  activeKey: string | undefined,
+  activeDir: 'asc' | 'desc' | undefined,
+  key: string
+): 'asc' | 'desc' | null {
+  if (activeKey !== key) return 'asc';
+  if (activeDir === 'asc') return 'desc';
+  if (activeDir === 'desc') return null;
+  return 'asc';
+}
+
+const SORT_HINT: Record<string, string> = { asc: 'ascending', desc: 'descending' };
 
 export function DataTable<T>({
   columns,
@@ -417,7 +437,12 @@ export function DataTable<T>({
   onRowClick?: (row: T) => void;
   sortBy?: string;
   sortDir?: 'asc' | 'desc';
-  onSort?: (key: string) => void;
+  /**
+   * Server-driven sorting. `dir` is the state the header has just moved to:
+   * null means the column was switched off and the screen should fall back to
+   * its own default order.
+   */
+  onSort?: (key: string, dir: 'asc' | 'desc' | null) => void;
   loading?: boolean;
   empty?: ReactNode;
   dense?: boolean;
@@ -451,9 +476,14 @@ export function DataTable<T>({
 
   const activeSortKey = serverDriven ? sortBy : localSort?.key;
   const activeSortDir = serverDriven ? sortDir : localSort?.dir;
+  /**
+   * Three-state header (review, 25 Aug): ascending, descending, then back to
+   * the table's own order so a reader can undo a sort without reloading.
+   */
   const handleSort = (key: string) => {
-    if (serverDriven) return onSort!(key);
-    setLocalSort((prev) => (prev?.key === key ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' }));
+    const dir = nextSortDir(activeSortKey, activeSortDir, key);
+    if (serverDriven) return onSort!(key, dir);
+    setLocalSort(dir ? { key, dir } : null);
   };
 
   return (
@@ -477,19 +507,31 @@ export function DataTable<T>({
                   c.sortable && 'select-none',
                   c.sticky && 'sticky right-0 z-20 bg-essa-600 shadow-[-6px_0_6px_-6px_rgba(16,24,40,0.25)]'
                 )}
-                aria-sort={activeSortKey === c.key ? (activeSortDir === 'asc' ? 'ascending' : 'descending') : undefined}
+                aria-sort={
+                  !c.sortable ? undefined
+                    : activeSortKey === c.key ? (activeSortDir === 'asc' ? 'ascending' : 'descending')
+                    : 'none'
+                }
               >
                 <span className={clsx('inline-flex items-center', c.align === 'right' && 'justify-end', c.align === 'center' && 'justify-center')}>
                   {c.sortable ? (
-                    <button
-                      type="button"
-                      onClick={() => handleSort(c.key)}
-                      className="inline-flex items-center gap-1 text-left hover:underline"
-                      title={`Sort by ${typeof c.header === 'string' ? c.header : c.key}`}
-                    >
-                      {c.header}
-                      <SortIcon active={activeSortKey === c.key} dir={activeSortDir} />
-                    </button>
+                    (() => {
+                      const label = typeof c.header === 'string' ? c.header : c.key;
+                      const next = nextSortDir(activeSortKey, activeSortDir, c.key);
+                      const hint = next ? `Sort by ${label}, ${SORT_HINT[next]}` : `Stop sorting by ${label}`;
+                      return (
+                        <button
+                          type="button"
+                          onClick={() => handleSort(c.key)}
+                          className="inline-flex items-center gap-1 text-left hover:underline"
+                          title={hint}
+                          aria-label={hint}
+                        >
+                          {c.header}
+                          <SortIcon active={activeSortKey === c.key} dir={activeSortDir} />
+                        </button>
+                      );
+                    })()
                   ) : (
                     c.header
                   )}

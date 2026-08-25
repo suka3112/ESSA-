@@ -37,7 +37,7 @@ interface ConfigBundle {
   version: { id: string; versionNo: string; label: string; status: string; effectiveFrom?: string; createdBy: string; createdAt: string; approvedBy?: string; publishedBy?: string; publishedAt?: string; notes?: string };
   categories: { id: string; code: string; name: string; description: string; poBased: boolean; active: boolean }[];
   documentTypes: { id: string; code: string; name: string; purpose: string; defaultExtractionMode: string; active: boolean }[];
-  categoryDocuments: { id: string; categoryId: string; documentTypeId: string; requirementType: string; checkMode: string; contentCheckRequired: boolean; availabilityCheckRequired: boolean; allowMultiple: boolean; missingSeverity: string; blocking: boolean; overrideAllowed: boolean; sequence: number; active: boolean; condition?: string }[];
+  categoryDocuments: { id: string; categoryId: string; documentTypeId: string; requirementType: string; checkMode: string; contentCheckRequired: boolean; availabilityCheckRequired: boolean; allowMultiple: boolean; missingSeverity: string; blocking: boolean; overrideAllowed: boolean; sequence: number; active: boolean; condition?: string; conditionRule?: string }[];
   documentFields: { id: string; categoryId: string; documentTypeId: string; fieldCode: string; label: string; dataType: string; mandatory: boolean; extractionRequired: boolean; confidenceThreshold: number; manualEditAllowed: boolean; displayOrder: number; sapMapped: boolean; active: boolean }[];
   promptTemplates: { id: string; documentTypeId: string; name: string; version: string; status: string; systemInstruction: string; extractionInstruction: string; confidenceThreshold: number; effectiveDate?: string; testSampleCount: number; createdBy: string }[];
   extractionProfiles: { id: string; documentTypeId: string; modelDeployment: string; promptTemplateId: string; reviewThreshold: number; version: string; status: string }[];
@@ -105,18 +105,22 @@ function SplitChip({ scattered }: { scattered: boolean }) {
   );
 }
 
-function RequiredChip({ required }: { required: boolean }) {
+const CONDITION_LABEL: Record<string, string> = {
+  DOMESTIC_VENDOR: 'Required when the vendor is Indonesian (e-Faktur); not expected from a foreign vendor',
+  FOREIGN_VENDOR: 'Required when the vendor is foreign',
+  PO_BASED: 'Required when the invoice references a PO',
+};
+function RequiredChip({ required, conditionRule }: { required: boolean; conditionRule?: string }) {
+  if (conditionRule) {
+    return (
+      <span title={CONDITION_LABEL[conditionRule] ?? conditionRule} className="inline-flex rounded-full bg-semantic-warningBg px-2.5 py-0.5 text-2xs font-medium text-semantic-warning">
+        Conditional
+      </span>
+    );
+  }
   return (
     <span className={clsx('inline-flex rounded-full px-2.5 py-0.5 text-2xs font-medium', required ? 'bg-semantic-errorBg text-semantic-error' : 'bg-line-soft text-ink-muted')}>
       {required ? 'Required' : 'Optional'}
-    </span>
-  );
-}
-
-function ActionPill({ kind }: { kind: 'Block' | 'Warning' }) {
-  return (
-    <span className={clsx('inline-flex rounded-full px-2.5 py-0.5 text-2xs font-bold text-white', kind === 'Block' ? 'bg-semantic-error' : 'bg-semantic-warning')}>
-      {kind}
     </span>
   );
 }
@@ -521,29 +525,7 @@ function CategoryEditor(p: TabProps) {
         </button>
       </div>
 
-      {/* right rail */}
-      <aside className="w-full shrink-0 border-t border-line-soft p-4 xl:w-72 xl:border-l xl:border-t-0">
-        <h4 className="text-sm font-semibold text-ink">{category.name}</h4>
-        <p className="mb-3 text-2xs text-ink-muted">{category.poBased ? 'PO' : 'Non-PO'} · detection summary</p>
-        <RailField label="Current category" value={category.poBased ? 'PO' : 'Non-PO'} />
-        <RailField label="PO series summary" value={category.poBased ? catSeries : 'Non-PO'} />
-        <div className="mb-3">
-          <p className="mb-1 text-2xs font-semibold uppercase tracking-wide text-ink-muted">Content disambiguation</p>
-          <p className="text-2xs leading-relaxed text-ink-secondary">
-            {sharing.length
-              ? `Required because this type shares its PO series with ${sharing.map((c) => c.name).join(', ')}.`
-              : 'Not required — no other invoice type shares this PO series.'}
-          </p>
-        </div>
-        <div>
-          {/* Review §16: no internal implementation talk in the UI. */}
-          <p className="mb-1 text-2xs font-semibold uppercase tracking-wide text-ink-muted">How changes are saved</p>
-          <p className="text-2xs leading-relaxed text-ink-muted">
-            Changes are saved as they are made and recorded in the Audit Log. They apply to invoices received from
-            now on, so invoices already in progress keep the settings they started on.
-          </p>
-        </div>
-      </aside>
+      {/* The detection-summary rail was removed (review, 25 Aug): everything it repeated is on the card itself. */}
 
       <Modal
         open={Boolean(draft)}
@@ -609,15 +591,6 @@ function ReadField({ label, value, hint, mono, multiline }: { label: string; val
         {value}
       </dd>
       {hint && <p className="mt-1 text-2xs text-ink-muted">{hint}</p>}
-    </div>
-  );
-}
-
-function RailField({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="mb-3">
-      <p className="mb-1 text-2xs font-semibold uppercase tracking-wide text-ink-muted">{label}</p>
-      <div className="rounded-md border border-line bg-canvas px-2.5 py-1.5 font-mono text-xs text-ink-secondary">{value}</div>
     </div>
   );
 }
@@ -694,7 +667,7 @@ function DocumentsCatalog(p: TabProps) {
                       <td className="px-2 py-2.5 text-xs font-semibold text-ink">{dt?.name}</td>
                       <td className="px-2 py-2.5 font-mono text-xs text-ink-secondary">{slugOf(dt?.code ?? '')}</td>
                       <td className="px-2 py-2.5"><SplitChip scattered={scattered(d)} /></td>
-                      <td className="px-2 py-2.5"><RequiredChip required={required(d)} /></td>
+                      <td className="px-2 py-2.5"><RequiredChip required={required(d)} conditionRule={d.requirementType === 'CONDITIONAL' ? d.conditionRule ?? 'CONDITIONAL' : undefined} /></td>
                       <td className="px-2 py-2.5 text-center text-xs font-medium text-ink-secondary">{fieldCount(categoryId, d.documentTypeId)}</td>
                       <td className="px-2 py-2.5" onClick={(e) => e.stopPropagation()}>
                         <div className="flex justify-end gap-1 pr-2">
@@ -715,56 +688,7 @@ function DocumentsCatalog(p: TabProps) {
           </div>
         </div>
 
-        {/* right rail — classification & split settings for the selected document */}
-        <aside className="w-full shrink-0 border-t border-line-soft p-4 xl:w-72 xl:border-l xl:border-t-0">
-          {selected ? (
-            <>
-              <h4 className="text-sm font-semibold text-ink">{docType(selected.documentTypeId)?.name}</h4>
-              <p className="mb-3 text-2xs text-ink-muted">{category.name} · classification &amp; split settings</p>
-
-              <div className="mb-3">
-                <p className="mb-1 text-2xs font-semibold uppercase tracking-wide text-ink-muted">Category ID</p>
-                <div className="rounded-md border border-line bg-canvas px-2.5 py-1.5 font-mono text-xs text-ink-secondary">{slugOf(docType(selected.documentTypeId)?.code ?? '')}</div>
-                <p className="mt-1 text-2xs text-ink-muted">The slug the page classifier assigns to this document type. Must be unique within this invoice type's catalog.</p>
-              </div>
-
-              {/* Read-only summary — changing any of this happens in the Edit
-                  dialog, so the card that shows the data is never also a form
-                  (review, 25 Aug). */}
-              <div className="mb-3">
-                <p className="mb-1 text-2xs font-semibold uppercase tracking-wide text-ink-muted">Split behaviour</p>
-                <p className="rounded-md border border-line bg-canvas px-2.5 py-1.5 text-xs text-ink">
-                  {scattered(selected) ? 'Scattered' : 'Contiguous'}
-                </p>
-                <p className="mt-1 text-2xs text-ink-muted">
-                  {scattered(selected)
-                    ? 'Pages of this document interleave within the bundle, e.g. daily sheets.'
-                    : 'This document is always one continuous block, e.g. the invoice or the PO.'}
-                </p>
-              </div>
-
-              <div className="mb-3">
-                <p className="mb-1 text-2xs font-semibold uppercase tracking-wide text-ink-muted">Required for extraction</p>
-                <p className="rounded-md border border-line bg-canvas px-2.5 py-1.5 text-xs text-ink">
-                  {required(selected) ? 'Required' : 'Optional'}
-                </p>
-                <p className="mt-1 text-2xs text-ink-muted">
-                  {required(selected)
-                    ? 'Extraction blocks if this document is absent from the upload.'
-                    : 'Extraction continues if this document is absent from the upload.'}
-                </p>
-              </div>
-
-              {mayEdit && (
-                <Button variant="secondary" size="sm" className="w-full" onClick={() => setEditing(selected)}>
-                  <Pencil size={13} /> Edit document
-                </Button>
-              )}
-            </>
-          ) : (
-            <p className="text-2xs text-ink-muted">Select a document row to see its classification and split settings.</p>
-          )}
-        </aside>
+        {/* Classification & split settings are edited from the pencil on each row (review, 25 Aug: no side rail). */}
       </div>
 
       {/* UI/UX review: the generated AI prompt is a development artefact and is
@@ -821,7 +745,7 @@ function DocumentsCatalog(p: TabProps) {
           </Field>
           <Field label="What is checked" hint="Whether the platform reads the content of this document or only confirms it is present">
             <Select value={newDoc.contentCheck ? 'content' : 'availability'} onChange={(e) => setNewDoc((d) => ({ ...d, contentCheck: e.target.value === 'content' }))} className="w-full">
-              <option value="content">Availability + content — read the document and validate it</option>
+              <option value="content">Availability, content — read the document and validate it</option>
               <option value="availability">Availability only — confirm it is present</option>
             </Select>
           </Field>
@@ -934,12 +858,35 @@ function EditDocumentModal({
 
 // ---------------------------------------------------- Fields to Capture tab
 
+interface FieldDraft {
+  original?: DocField;
+  label: string;
+  hint: string;
+  /** '' = captured but not compared with a reference value. */
+  matchType: string;
+  toleranceRule: string;
+  mandatory: boolean;
+  status: 'ACTIVE' | 'INACTIVE' | 'DRAFT';
+}
+
+const MATCH_TYPES: { value: string; label: string; hint: string }[] = [
+  { value: 'EXACT_MATCH', label: 'Exact match', hint: 'Values must be identical (case and spacing ignored)' },
+  { value: 'AMOUNT_MATCH', label: 'Amount match', hint: 'e.g. Diff <= 2% or Diff <= IDR 10,000' },
+  { value: 'DATE_MATCH', label: 'Date match', hint: 'e.g. +/- 3 days' },
+  { value: 'CODE_MATCH', label: 'Code match', hint: 'Codes compared after normalisation, e.g. NPWP with or without punctuation' },
+  { value: 'LIST_MATCH', label: 'List match', hint: 'Allowed values separated by |, e.g. IDR | USD' },
+  { value: 'RANGE_MATCH', label: 'Range match', hint: 'e.g. 0 – 1,000,000,000' },
+];
+const TOLERANCE_DEFAULT: Record<string, string> = {
+  EXACT_MATCH: 'Exact', AMOUNT_MATCH: 'Diff <= 2%', DATE_MATCH: '+/- 3 days', CODE_MATCH: 'Exact', LIST_MATCH: 'IDR | USD', RANGE_MATCH: '0 – 1,000,000,000',
+};
+
 function FieldsToCapture(p: TabProps) {
   const { bundle, mayEdit, act, categoryId, category, catDocs, docType, fieldsOf, selectedCatDocId, setSelectedCatDocId, fieldHints, setFieldHints } = p;
   const [selectedFieldId, setSelectedFieldId] = useState<string>('');
   // One draft drives both Add field and Edit field, and both open as a dialog
   // rather than turning the rail into a form (review, 25 Aug).
-  const [draft, setDraft] = useState<{ original?: DocField; label: string; hint: string } | null>(null);
+  const [draft, setDraft] = useState<FieldDraft | null>(null);
   const [promptOverride, setPromptOverride] = useState<Record<string, string>>({});
   if (!category) return <EmptyPane text="Select an invoice type on the left." />;
 
@@ -956,7 +903,16 @@ function FieldsToCapture(p: TabProps) {
       (m) => m.categoryId === categoryId && m.fieldCode.toLowerCase() === f.fieldCode.toLowerCase()
     );
   const selectedField = fields.find((f) => f.id === selectedFieldId);
-  const required = catDoc?.requirementType === 'MANDATORY';
+  // Everything the table shows is in the dialog: name, keyword, match type,
+  // tolerance / rule, mandatory and status (review, 25 Aug).
+  const draftFor = (f: DocField): FieldDraft => {
+    const m = mappingOf(f);
+    return {
+      original: f, label: f.label, hint: hintOf(f),
+      matchType: m?.matchType ?? '', toleranceRule: m?.toleranceRule ?? '',
+      mandatory: m?.mandatory ?? f.mandatory, status: m ? (m.status as FieldDraft['status']) : f.active ? 'ACTIVE' : 'INACTIVE',
+    };
+  };
 
   // The hint is the wording the extractor looks for on the page, so it reads as
   // a keyword list rather than a technical "Aliases:" prefix (review, 24 Aug).
@@ -980,20 +936,11 @@ function FieldsToCapture(p: TabProps) {
               <p className="text-xs text-ink-muted">{category.name} · {category.poBased ? 'PO' : 'Non-PO'}</p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <span className="flex items-center gap-1.5 text-2xs text-ink-muted">
-                Required for extraction
-                <Toggle
-                  checked={required}
-                  disabled={!mayEdit}
-                  onChange={(v) => act('categoryDocuments', 'UPDATE', { ...catDoc, requirementType: v ? 'MANDATORY' : 'OPTIONAL' })}
-                  label="Required for extraction"
-                />
-              </span>
               <Button variant="ghost" size="sm" disabled={!mayEdit} onClick={() => act('categoryDocuments', 'TOGGLE', { id: catDoc.id })}>
                 {catDoc.active ? 'Exclude document' : 'Include document'}
               </Button>
               <Button variant="ghost" size="sm" disabled={!mayEdit} onClick={() => act('categoryDocuments', 'DELETE', { id: catDoc.id })}>Remove</Button>
-              <Button size="sm" disabled={!mayEdit} onClick={() => setDraft({ label: '', hint: '' })}>
+              <Button size="sm" disabled={!mayEdit} onClick={() => setDraft({ label: '', hint: '', matchType: '', toleranceRule: '', mandatory: false, status: 'ACTIVE' })}>
                 <Plus size={13} /> Add field
               </Button>
             </div>
@@ -1031,14 +978,14 @@ function FieldsToCapture(p: TabProps) {
                       <td className="max-w-80 px-2 py-2.5 text-xs text-ink-muted"><span className="block truncate">{hintOf(f) || '—'}</span></td>
                       <td className="px-2 py-2.5">{(() => { const m = mappingOf(f); return m ? <Badge tone="neutral">{m.matchType.replace(/_/g, ' ')}</Badge> : <span className="text-2xs text-ink-faint">—</span>; })()}</td>
                       <td className="whitespace-nowrap px-2 py-2.5 text-xs">{mappingOf(f)?.toleranceRule ?? <span className="text-2xs text-ink-faint">—</span>}</td>
-                      <td className="px-2 py-2.5 text-center text-xs font-semibold">{(() => { const m = mappingOf(f); return m ? (m.mandatory ? <span className="text-essa-700">Yes</span> : <span className="text-ink-muted">No</span>) : <span className="text-2xs font-normal text-ink-faint">—</span>; })()}</td>
-                      <td className="px-2 py-2.5">{(() => { const m = mappingOf(f); return m ? <StatusBadge value={m.status} /> : <span className="text-2xs text-ink-faint">—</span>; })()}</td>
+                      <td className="px-2 py-2.5 text-center text-xs font-semibold">{(mappingOf(f)?.mandatory ?? f.mandatory) ? <span className="text-essa-700">Yes</span> : <span className="text-ink-muted">No</span>}</td>
+                      <td className="px-2 py-2.5"><StatusBadge value={mappingOf(f)?.status ?? (f.active ? 'ACTIVE' : 'INACTIVE')} /></td>
                       <td className="px-2 py-2.5" onClick={(e) => e.stopPropagation()}>
                         <div className="flex justify-end gap-1">
                           <button
                             aria-label={`Edit ${f.label}`}
                             disabled={!mayEdit}
-                            onClick={() => setDraft({ original: f, label: f.label, hint: hintOf(f) })}
+                            onClick={() => setDraft(draftFor(f))}
                             className="rounded border border-line p-1 text-ink-muted hover:bg-essa-50 hover:text-essa-700 disabled:opacity-40"
                           >
                             <Pencil size={12} />
@@ -1062,39 +1009,7 @@ function FieldsToCapture(p: TabProps) {
           </div>
         </div>
 
-        {/* right rail — field editor */}
-        <aside className="w-full shrink-0 border-t border-line-soft p-4 xl:w-72 xl:border-l xl:border-t-0">
-          {selectedField ? (
-            <>
-              <h4 className="text-sm font-semibold text-ink">{selectedField.label}</h4>
-              <p className="mb-3 text-2xs text-ink-muted">{dt.name} · {category.name}</p>
-              <RailField label="Keyword in document" value={hintOf(selectedField) || 'Not set'} />
-              <RailField label="Match type" value={mappingOf(selectedField)?.matchType.replace(/_/g, ' ') ?? 'Not compared'} />
-              <RailField label="Tolerance / rule" value={mappingOf(selectedField)?.toleranceRule ?? 'None'} />
-              <RailField label="Mandatory" value={mappingOf(selectedField)?.mandatory ? 'Yes' : 'No'} />
-              {mayEdit && (
-                <Button variant="secondary" size="sm" className="w-full" onClick={() => setDraft({ original: selectedField, label: selectedField.label, hint: hintOf(selectedField) })}>
-                  <Pencil size={13} /> Edit field
-                </Button>
-              )}
-            </>
-          ) : (
-            <>
-              <h4 className="text-sm font-semibold text-ink">{dt.name}</h4>
-              <p className="mb-3 text-2xs text-ink-muted">{category.name}</p>
-              <RailField label="Required for extraction" value={required ? 'Required' : 'Optional'} />
-              <p className="mb-3 text-2xs text-ink-muted">
-                {required
-                  ? 'Extraction blocks if this document is absent from the upload.'
-                  : 'Extraction continues if this document is absent from the upload.'}
-              </p>
-              <p className="mb-3 text-2xs text-ink-secondary">{fields.length} fields configured for this document. Select a row to see it, or use the pencil to change it.</p>
-              <Link to="?tab=documents" className="block rounded-md border border-line px-3 py-2 text-center text-xs font-medium text-ink-secondary hover:bg-canvas">
-                Classification &amp; split settings →
-              </Link>
-            </>
-          )}
-        </aside>
+        {/* Fields are edited from the pencil on each row (review, 25 Aug: no side rail). */}
       </div>
 
       <Modal
@@ -1110,9 +1025,26 @@ function FieldsToCapture(p: TabProps) {
               onClick={() => {
                 if (!draft) return;
                 const label = draft.label.trim();
+                const mandatory = draft.mandatory;
+                const active = draft.status === 'ACTIVE';
+                // Comparison settings live on the field mapping; one is kept
+                // only while a match type is chosen.
+                const saveMapping = (fieldCode: string, existing?: ReturnType<typeof mappingOf>) => {
+                  const mapping = {
+                    categoryId, documentTypeId: catDoc.documentTypeId, fieldCode, fieldLabel: label,
+                    sapField: existing?.sapField ?? '', sapDescription: existing?.sapDescription ?? '',
+                    matchType: draft.matchType, toleranceRule: draft.toleranceRule.trim() || TOLERANCE_DEFAULT[draft.matchType] || 'Exact',
+                    mandatory, status: draft.status, configVersionId: 'cfg-1',
+                  };
+                  if (!draft.matchType) { if (existing) act('fieldMappings', 'DELETE', { id: existing.id }); return; }
+                  if (existing) act('fieldMappings', 'UPDATE', { ...existing, ...mapping });
+                  else act('fieldMappings', 'CREATE', mapping);
+                };
                 if (draft.original) {
-                  if (label !== draft.original.label) act('documentFields', 'UPDATE', { ...draft.original, label });
-                  setFieldHints((m) => ({ ...m, [draft.original!.id]: draft.hint }));
+                  const f = draft.original;
+                  if (label !== f.label || mandatory !== f.mandatory || active !== f.active) act('documentFields', 'UPDATE', { ...f, label, mandatory, active });
+                  setFieldHints((m) => ({ ...m, [f.id]: draft.hint }));
+                  saveMapping(f.fieldCode, mappingOf(f));
                 } else {
                   // The internal key is derived from the name — administrators
                   // name fields, they do not write keys (review, 24 Aug).
@@ -1122,17 +1054,18 @@ function FieldsToCapture(p: TabProps) {
                     documentTypeId: catDoc.documentTypeId,
                     fieldCode,
                     label,
-                    dataType: 'TEXT',
-                    mandatory: false,
+                    dataType: draft.matchType === 'AMOUNT_MATCH' ? 'AMOUNT' : draft.matchType === 'DATE_MATCH' ? 'DATE' : 'TEXT',
+                    mandatory,
                     extractionRequired: true,
                     confidenceThreshold: 0.7,
                     manualEditAllowed: true,
                     displayOrder: fields.length + 1,
                     sapMapped: false,
-                    active: true,
+                    active,
                     configVersionId: 'cfg-1',
                   });
                   if (draft.hint) setFieldHints((m) => ({ ...m, [`${catDoc.documentTypeId}:${fieldCode}`]: draft.hint }));
+                  saveMapping(fieldCode);
                 }
                 setDraft(null);
               }}
@@ -1150,6 +1083,45 @@ function FieldsToCapture(p: TabProps) {
             <Field label="Keyword in document" hint="The wording to look for on the page — separate alternatives with a comma">
               <Input value={draft.hint} placeholder="e.g. invoice no, bill number, tax invoice no" onChange={(e) => setDraft((d) => d && ({ ...d, hint: e.target.value }))} />
             </Field>
+            <div className="grid gap-3 md:grid-cols-2">
+              <Field label="Match type" hint="How the extracted value is compared with the SAP / reference value">
+                <Select
+                  value={draft.matchType}
+                  className="w-full"
+                  onChange={(e) => setDraft((d) => {
+                    if (!d) return d;
+                    const matchType = e.target.value;
+                    // Keep a tolerance the administrator typed; swap a default for the new default.
+                    const keep = d.toleranceRule && d.toleranceRule !== (TOLERANCE_DEFAULT[d.matchType] ?? '');
+                    return { ...d, matchType, toleranceRule: keep ? d.toleranceRule : TOLERANCE_DEFAULT[matchType] ?? '' };
+                  })}
+                >
+                  <option value="">Not compared — captured only</option>
+                  {MATCH_TYPES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+                </Select>
+              </Field>
+              <Field label="Tolerance / rule" hint={draft.matchType ? (MATCH_TYPES.find((m) => m.value === draft.matchType)?.hint ?? '') : 'Choose a match type first'}>
+                <Input
+                  value={draft.toleranceRule}
+                  disabled={!draft.matchType}
+                  placeholder={TOLERANCE_DEFAULT[draft.matchType] ?? '—'}
+                  className="w-full"
+                  onChange={(e) => setDraft((d) => d && ({ ...d, toleranceRule: e.target.value }))}
+                />
+              </Field>
+              <Field label="Mandatory" hint="A mandatory field that cannot be read stops the invoice for correction">
+                <Select value={draft.mandatory ? 'yes' : 'no'} className="w-full" onChange={(e) => setDraft((d) => d && ({ ...d, mandatory: e.target.value === 'yes' }))}>
+                  <option value="yes">Yes</option>
+                  <option value="no">No</option>
+                </Select>
+              </Field>
+              <Field label="Status" hint="Inactive fields stay configured but are neither captured nor compared">
+                <Select value={draft.status} className="w-full" onChange={(e) => setDraft((d) => d && ({ ...d, status: e.target.value as FieldDraft['status'] }))}>
+                  <option value="ACTIVE">Active</option>
+                  <option value="INACTIVE">Inactive</option>
+                </Select>
+              </Field>
+            </div>
             {draft.original && (
               <button
                 onClick={() => { act('documentFields', 'DELETE', { id: draft.original!.id }); setSelectedFieldId(''); setDraft(null); }}
@@ -1179,8 +1151,6 @@ interface RuleRowVm {
   ruleName: string;
   availabilityContent: boolean;
   mandatory: boolean;
-  missingAction: 'Block' | 'Warning';
-  contentValidation: boolean;
   workflowImpact: string;
 }
 
@@ -1209,9 +1179,7 @@ function RulesGrid(p: TabProps) {
         ruleName: name,
         availabilityContent,
         mandatory: d.requirementType === 'MANDATORY',
-        missingAction: d.blocking ? 'Block' as const : 'Warning' as const,
-        contentValidation: d.contentCheckRequired,
-        workflowImpact: d.blocking ? 'Exception + Hold' : 'Exception',
+        workflowImpact: d.blocking ? 'Exception, Hold' : 'Exception',
       };
     });
   }, [filterCat, catDocs, docType]);
@@ -1248,16 +1216,14 @@ function RulesGrid(p: TabProps) {
           ) },
           {
             key: 'scope', header: 'Check Scope', sortable: true,
-            value: (r) => (r.availabilityContent ? 'Availability + Content' : 'Availability Only'),
+            value: (r) => (r.availabilityContent ? 'Availability, Content' : 'Availability Only'),
             render: (r) => (
               <span className={clsx('inline-flex whitespace-nowrap rounded-full px-2.5 py-0.5 text-2xs font-medium', r.availabilityContent ? 'bg-essa-100 text-essa-800' : 'bg-semantic-infoBg text-semantic-info')}>
-                {r.availabilityContent ? 'Availability + Content' : 'Availability Only'}
+                {r.availabilityContent ? 'Availability, Content' : 'Availability Only'}
               </span>
             ),
           },
           { key: 'mandatory', header: 'Mandatory', align: 'center', sortable: true, value: (r) => (r.mandatory ? 'Yes' : 'No'), render: (r) => <span className={clsx('text-xs font-semibold', r.mandatory ? 'text-essa-700' : 'text-semantic-error')}>{r.mandatory ? 'Yes' : 'No'}</span> },
-          { key: 'missing', header: 'Missing Document Action', align: 'center', sortable: true, value: (r) => r.missingAction, render: (r) => <ActionPill kind={r.missingAction} /> },
-          { key: 'content', header: 'Content Validation', align: 'center', sortable: true, value: (r) => (r.contentValidation ? 'Yes' : 'No'), render: (r) => <span className={clsx('text-xs font-semibold', r.contentValidation ? 'text-essa-700' : 'text-semantic-error')}>{r.contentValidation ? 'Yes' : 'No'}</span> },
           { key: 'impact', header: 'Workflow Impact', sortable: true, value: (r) => r.workflowImpact, render: (r) => <span className="whitespace-nowrap text-xs">{r.workflowImpact}</span> },
           {
             key: 'status', header: 'Status', sortable: true, value: (r) => (r.catDoc.active ? 'Active' : 'Off'), render: (r) => (
@@ -1285,7 +1251,7 @@ function RulesGrid(p: TabProps) {
       <div className="grid gap-4 border-t border-line-soft p-4 lg:grid-cols-2">
         <div className="rounded-lg border border-line bg-white p-3">
           <p className="mb-2 text-xs font-semibold text-ink">Rule Logic</p>
-          <p className="text-xs font-semibold text-ink-secondary">Availability + Content</p>
+          <p className="text-xs font-semibold text-ink-secondary">Availability, Content</p>
           <p className="mb-2 text-2xs text-ink-muted">The system verifies the document is present in the invoice PDF and extracts / validates its content against SAP.</p>
           <p className="text-xs font-semibold text-ink-secondary">Availability Only</p>
           <p className="text-2xs text-ink-muted">The system only checks that the document is present. Content is not extracted or compared with SAP.</p>
@@ -1299,10 +1265,9 @@ function RulesGrid(p: TabProps) {
             <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
               <div><dt className="text-2xs font-medium uppercase tracking-wide text-ink-muted">Rule Name</dt><dd>{selected.ruleName}</dd></div>
               <div><dt className="text-2xs font-medium uppercase tracking-wide text-ink-muted">Document Title</dt><dd>{selected.documentTitle}</dd></div>
-              <div><dt className="text-2xs font-medium uppercase tracking-wide text-ink-muted">Check Scope</dt><dd>{selected.availabilityContent ? 'Availability + Content' : 'Availability Only'}</dd></div>
-              <div><dt className="text-2xs font-medium uppercase tracking-wide text-ink-muted">Content Validation</dt><dd>{selected.contentValidation ? 'Yes' : 'No'}</dd></div>
+              <div><dt className="text-2xs font-medium uppercase tracking-wide text-ink-muted">Check Scope</dt><dd>{selected.availabilityContent ? 'Availability, Content' : 'Availability Only'}</dd></div>
               <div><dt className="text-2xs font-medium uppercase tracking-wide text-ink-muted">Mandatory</dt><dd>{selected.mandatory ? 'Yes' : 'No'}</dd></div>
-              <div><dt className="text-2xs font-medium uppercase tracking-wide text-ink-muted">Missing Document Action</dt><dd>{selected.missingAction === 'Block' ? 'Create exception and block workflow until uploaded.' : 'Create exception; workflow continues with a warning.'}</dd></div>
+              <div><dt className="text-2xs font-medium uppercase tracking-wide text-ink-muted">Workflow Impact</dt><dd>{selected.workflowImpact}</dd></div>
             </dl>
           ) : (
             <p className="py-4 text-center text-2xs text-ink-muted">Select a rule row to view its details.</p>
@@ -1329,8 +1294,10 @@ function RulesGrid(p: TabProps) {
               ...editing,
               requirementType: v.mandatory ? 'MANDATORY' : 'OPTIONAL',
               checkMode: v.availabilityContent ? 'EXTRACT_AND_VALIDATE' : 'AVAILABILITY_ONLY',
-              contentCheckRequired: v.contentValidation,
-              blocking: v.missingAction === 'Block',
+              // Content is validated whenever the check scope includes it, and a
+              // mandatory document blocks the workflow when missing (review, 25 Aug).
+              contentCheckRequired: v.availabilityContent,
+              blocking: v.mandatory,
               active: v.active,
             });
           } else {
@@ -1341,10 +1308,10 @@ function RulesGrid(p: TabProps) {
               documentTypeId: dt.id,
               requirementType: v.mandatory ? 'MANDATORY' : 'OPTIONAL',
               checkMode: v.availabilityContent ? 'EXTRACT_AND_VALIDATE' : 'AVAILABILITY_ONLY',
-              contentCheckRequired: v.contentValidation,
+              contentCheckRequired: v.availabilityContent,
               availabilityCheckRequired: true,
               allowMultiple: false,
-              blocking: v.missingAction === 'Block',
+              blocking: v.mandatory,
               overrideAllowed: false,
               active: v.active,
               sequence: rows.length + 1,
@@ -1370,7 +1337,7 @@ function RuleModal({
   docTypes: ConfigBundle['documentTypes'];
   docTitleOf: (d: CatDoc) => string;
   onClose: () => void;
-  onSubmit: (v: { categoryId: string; documentTitle: string; documentTypeId: string; ruleName: string; availabilityContent: boolean; mandatory: boolean; missingAction: 'Block' | 'Warning'; contentValidation: boolean; active: boolean }) => boolean;
+  onSubmit: (v: { categoryId: string; documentTitle: string; documentTypeId: string; ruleName: string; availabilityContent: boolean; mandatory: boolean; active: boolean }) => boolean;
 }) {
   const [v, setV] = useState({
     categoryId: defaultCategoryId,
@@ -1379,8 +1346,6 @@ function RuleModal({
     ruleName: '',
     availabilityContent: true,
     mandatory: true,
-    missingAction: 'Block' as 'Block' | 'Warning',
-    contentValidation: true,
     active: true,
   });
   const [seeded, setSeeded] = useState('');
@@ -1395,8 +1360,6 @@ function RuleModal({
         ruleName: `${docTitleOf(editing)} ${editing.checkMode === 'AVAILABILITY_ONLY' ? 'Availability' : 'Check'}`,
         availabilityContent: editing.checkMode !== 'AVAILABILITY_ONLY',
         mandatory: editing.requirementType === 'MANDATORY',
-        missingAction: editing.blocking ? 'Block' : 'Warning',
-        contentValidation: editing.contentCheckRequired,
         active: editing.active,
       });
     } else {
@@ -1404,7 +1367,7 @@ function RuleModal({
     }
   }
   if (!open) return null;
-  const workflowImpact = v.missingAction === 'Block' ? 'Exception + Hold' : 'Exception';
+  const workflowImpact = v.mandatory ? 'Exception, Hold' : 'Exception';
   return (
     <Modal
       open={open}
@@ -1441,24 +1404,14 @@ function RuleModal({
           <Input value={v.ruleName} placeholder="e.g. Attendance Sheet Availability" onChange={(e) => setV((s) => ({ ...s, ruleName: e.target.value }))} />
         </Field>
         <Field label="Check scope">
-          <Select value={v.availabilityContent ? 'AC' : 'A'} onChange={(e) => setV((s) => ({ ...s, availabilityContent: e.target.value === 'AC', contentValidation: e.target.value === 'AC' ? s.contentValidation : false }))} className="w-full">
-            <option value="AC">Availability + Content</option>
+          <Select value={v.availabilityContent ? 'AC' : 'A'} onChange={(e) => setV((s) => ({ ...s, availabilityContent: e.target.value === 'AC' }))} className="w-full">
+            <option value="AC">Availability, Content</option>
             <option value="A">Availability Only</option>
           </Select>
         </Field>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Mandatory">
             <Select value={v.mandatory ? 'Yes' : 'No'} onChange={(e) => setV((s) => ({ ...s, mandatory: e.target.value === 'Yes' }))} className="w-full">
-              <option>Yes</option><option>No</option>
-            </Select>
-          </Field>
-          <Field label="Missing document action">
-            <Select value={v.missingAction} onChange={(e) => setV((s) => ({ ...s, missingAction: e.target.value as 'Block' | 'Warning' }))} className="w-full">
-              <option>Block</option><option>Warning</option>
-            </Select>
-          </Field>
-          <Field label="Content validation">
-            <Select value={v.contentValidation ? 'Yes' : 'No'} disabled={!v.availabilityContent} onChange={(e) => setV((s) => ({ ...s, contentValidation: e.target.value === 'Yes' }))} className="w-full">
               <option>Yes</option><option>No</option>
             </Select>
           </Field>

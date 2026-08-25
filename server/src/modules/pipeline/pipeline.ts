@@ -99,6 +99,19 @@ export interface CompletenessRow {
   applicable: boolean;
 }
 
+/** Evaluate a conditional document requirement against the invoice. */
+function conditionApplies(cd: CategoryDocument, invoice: Invoice): boolean {
+  const db = getDb();
+  const vendor = db.vendors.find((v) => v.code === invoice.vendorCode);
+  const domestic = !vendor || vendor.country === 'Indonesia';
+  switch (cd.conditionRule) {
+    case 'DOMESTIC_VENDOR': return domestic;
+    case 'FOREIGN_VENDOR': return !domestic;
+    case 'PO_BASED': return Boolean(invoice.poNumber);
+    default: return Boolean(invoice.poNumber);
+  }
+}
+
 export function evaluateCompleteness(invoice: Invoice): { rows: CompletenessRow[]; missingBlocking: CompletenessRow[] } {
   const db = getDb();
   const catDocs = db.categoryDocuments.filter(
@@ -107,7 +120,7 @@ export function evaluateCompleteness(invoice: Invoice): { rows: CompletenessRow[
   const docs = db.invoiceDocuments.filter((d) => d.invoiceId === invoice.id && d.status === 'AVAILABLE');
   const rows: CompletenessRow[] = catDocs.map((cd) => {
     const available = docs.some((d) => d.documentTypeId === cd.documentTypeId);
-    const applicable = cd.requirementType !== 'CONDITIONAL' || Boolean(invoice.poNumber); // demo condition: PO-based conditionals
+    const applicable = cd.requirementType !== 'CONDITIONAL' || conditionApplies(cd, invoice);
     return { categoryDocument: cd, documentTypeId: cd.documentTypeId, available, applicable };
   });
   const missingBlocking = rows.filter(
@@ -458,7 +471,7 @@ export function startWorkflow(invoice: Invoice): void {
 
   const applicable = def.steps
     .filter((s) => {
-      if (s.amountThresholdMin != null && invoice.amount < s.amountThresholdMin) return false;
+      if (s.amountThresholdMin != null && (invoice.amountIdr ?? invoice.amount) < s.amountThresholdMin) return false;
       if (s.taxStep && !invoice.taxReviewRequired) return false;
       return true;
     })
@@ -471,7 +484,7 @@ export function startWorkflow(invoice: Invoice): void {
       // BPD §11.2: the approval band is chosen by amount alone. The level
       // belongs to a role, not a person — whoever holds it can approve.
       const doa = db.doaMatrix
-        .filter((d) => d.active && invoice.amount >= d.minAmount && (d.maxAmount == null || invoice.amount <= d.maxAmount))
+        .filter((d) => d.active && (invoice.amountIdr ?? invoice.amount) >= d.minAmount && (d.maxAmount == null || (invoice.amountIdr ?? invoice.amount) <= d.maxAmount))
         .sort((a, b) => a.level - b.level)[0];
       if (doa) {
         const role = db.roles.find((r) => r.code === doa.role) ?? db.roles.find((r) => r.code === 'AP_REVIEWER');
@@ -803,6 +816,7 @@ export interface IngestSpec {
   poNumber?: string;
   description?: string;
   invoiceDate?: string;
+  exchangeRate?: number;
   fileNames: { fileName: string; documentTypeId: string; sizeKb?: number; pages?: number }[];
   priority?: Invoice['priority'];
 }
@@ -816,7 +830,8 @@ export function ingestInvoice(
   const vendor = db.vendors.find((v) => v.code === spec.vendorCode);
   const activeConfig = db.configVersions.find((c) => c.status === 'ACTIVE');
   const correlationId = ids.correlation();
-  const taxRate = spec.taxRatePct ?? 18;
+  // Indonesian VAT (PPN) is 11% unless the upload says otherwise.
+  const taxRate = spec.taxRatePct ?? 11;
   const subtotal = Math.round((spec.amount / (1 + taxRate / 100)) * 100) / 100;
   const now = nowIso();
   const invoice: Invoice = {
@@ -831,6 +846,8 @@ export function ingestInvoice(
     subtotal,
     taxAmount: Math.round((spec.amount - subtotal) * 100) / 100,
     currency: spec.currency ?? 'IDR',
+    amountIdr: (spec.currency ?? 'IDR') === 'IDR' ? spec.amount : Math.round(spec.amount * (spec.exchangeRate ?? 16_800)),
+    exchangeRate: (spec.currency ?? 'IDR') === 'IDR' ? undefined : (spec.exchangeRate ?? 16_800),
     poNumber: spec.poNumber,
     companyCode: 'PAU',
     source,
@@ -843,7 +860,8 @@ export function ingestInvoice(
     configVersionId: activeConfig?.id ?? 'cfg-1',
     correlationId,
     description: spec.description ?? 'Invoice received for processing',
-    taxReviewRequired: spec.amount >= 1_000_000,
+    // Tax Team reviews withholding tax (PPh 23 / PPh 4(2)) on domestic services.
+    taxReviewRequired: ['cat-service', 'cat-manpower', 'cat-catering'].includes(spec.categoryId),
     createdAt: now,
     updatedAt: now,
   };
@@ -885,21 +903,21 @@ export function ingestInvoice(
       const cat = db.categories.find((c) => c.id === invoice.categoryId);
       if (cat?.code === 'MATERIAL' && !db.sapGrns.some((g) => g.poNumber === po.poNumber)) {
         db.sapGrns.push({
-          grnNumber: String(5000109000 + Math.floor(Math.random() * 899)),
+          grnNumber: String(5000002100 + Math.floor(Math.random() * 899)),
           poNumber: po.poNumber,
           postingDate: invoice.invoiceDate,
-          totalQuantity: Math.max(1, Math.round(invoice.subtotal / 6500)),
+          totalQuantity: 1,
           amount: invoice.subtotal,
           movementType: '101',
-          items: [{ poItem: '00010', quantity: Math.max(1, Math.round(invoice.subtotal / 6500)), amount: invoice.subtotal }],
+          items: [{ poItem: '00010', quantity: 1, amount: invoice.subtotal }],
         });
       } else if (cat && cat.code !== 'MATERIAL' && cat.code !== 'NON_PO' && !db.sapSes.some((s) => s.poNumber === po.poNumber)) {
         db.sapSes.push({
-          sesNumber: String(1000209000 + Math.floor(Math.random() * 899)),
+          sesNumber: String(8000003700 + Math.floor(Math.random() * 299)),
           poNumber: po.poNumber,
           postingDate: invoice.invoiceDate,
           serviceDescription: invoice.description,
-          quantity: Math.max(1, Math.round(invoice.subtotal / 450)),
+          quantity: 1,
           uom: 'AU',
           amount: invoice.subtotal,
           acceptedAmount: invoice.subtotal,
@@ -938,7 +956,7 @@ registerJobHandler('CLASSIFICATION', (job) => {
   invoice.stage = 'CLASSIFICATION';
   const cat = db.categories.find((c) => c.id === invoice.categoryId);
   addTimeline(invoice.id, 'DOCUMENT_CLASSIFIED', 'Documents classified', {
-    detail: `Category resolved: ${cat?.name ?? invoice.categoryId} (Azure GPT + configuration hints)`,
+    detail: `Category resolved: ${cat?.name ?? invoice.categoryId} (Azure GPT, configuration hints)`,
     status: 'SUCCESS', correlationId: invoice.correlationId,
   });
   systemAudit({

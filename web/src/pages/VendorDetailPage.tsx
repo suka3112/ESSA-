@@ -4,8 +4,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ShieldAlert, ShieldCheck, Mail, Phone, Landmark, Lock } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
-import { fmtDate, fmtDateTime, fmtMoney, titleCase } from '@/lib/format';
-import { Badge, Button, Card, ConfirmDialog, DataTable, KeyValue, LoadingState, PageHeader, StatusBadge, useToast, type Column } from '@/components/ui';
+import { fmtDate, fmtDateTime, fmtMoney, titleCase, type InvoiceStatusLabel } from '@/lib/format';
+import { Badge, Button, Card, ConfirmDialog, DataTable, InvoiceStatusBadge, KeyValue, LoadingState, PageHeader, StatusBadge, useToast, type Column } from '@/components/ui';
 
 interface VendorDetail {
   vendor: {
@@ -15,8 +15,8 @@ interface VendorDetail {
   };
   control?: { negativeFlag: boolean; apEnabled: boolean; reason?: string; remarks?: string; updatedByName: string; updatedAt: string };
   history: { id: string; action: string; reason: string; byName: string; at: string }[];
-  purchaseOrders: { poNumber: string; totalAmount: number; openAmount: number; validTo: string; status: string; poType: string }[];
-  invoices: { id: string; invoiceNumber: string; invoiceDate: string; amount: number; currency: string; lifecycle: string; stage: string; categoryName?: string }[];
+  purchaseOrders: { poNumber: string; totalAmount: number; openAmount: number; validTo: string; status: string; poType: string; currency?: string }[];
+  invoices: { id: string; invoiceNumber: string; invoiceDate: string; amount: number; currency: string; lifecycle: string; stage: string; status: InvoiceStatusLabel; categoryName?: string }[];
 }
 
 export default function VendorDetailPage() {
@@ -127,14 +127,14 @@ export default function VendorDetailPage() {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <Card title="Open purchase orders" pad={false}>
+        <Card title="Purchase orders" pad={false}>
           <DataTable
             dense
             columns={[
               { key: 'po', header: 'PO', sortable: true, value: (p) => p.poNumber, render: (p) => <span className="font-medium">{p.poNumber}</span> },
               { key: 'type', header: 'Type', sortable: true, value: (p) => p.poType, render: (p) => <Badge tone="neutral">{p.poType}</Badge> },
-              { key: 'total', header: 'Value', align: 'right', render: (p) => fmtMoney(p.totalAmount) },
-              { key: 'open', header: 'Open', align: 'right', sortable: true, value: (p) => p.openAmount, render: (p) => <span className="font-medium">{fmtMoney(p.openAmount)}</span> },
+              { key: 'total', header: 'Value', align: 'right', render: (p) => fmtMoney(p.totalAmount, p.currency) },
+              { key: 'open', header: 'Open', align: 'right', sortable: true, value: (p) => p.openAmount, render: (p) => <span className="font-medium">{fmtMoney(p.openAmount, p.currency)}</span> },
               { key: 'valid', header: 'Valid To', render: (p) => <span className="text-xs">{fmtDate(p.validTo)}</span> },
               { key: 'status', header: 'Status', render: (p) => <StatusBadge value={p.status} /> },
             ] satisfies Column<VendorDetail['purchaseOrders'][0]>[]}
@@ -151,7 +151,7 @@ export default function VendorDetailPage() {
               { key: 'date', header: 'Date', render: (i) => <span className="text-xs">{fmtDate(i.invoiceDate)}</span> },
               { key: 'cat', header: 'Category', render: (i) => <span className="text-xs">{i.categoryName}</span> },
               { key: 'amount', header: 'Amount', align: 'right', render: (i) => fmtMoney(i.amount, i.currency) },
-              { key: 'status', header: 'Status', render: (i) => <StatusBadge value={i.lifecycle} /> },
+              { key: 'status', header: 'Status', render: (i) => <InvoiceStatusBadge status={i.status} /> },
             ] satisfies Column<VendorDetail['invoices'][0]>[]}
             rows={data.invoices}
             rowKey={(i) => i.id}

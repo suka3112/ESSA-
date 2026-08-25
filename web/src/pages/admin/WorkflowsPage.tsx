@@ -15,7 +15,7 @@
  */
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CirclePlus, Copy, Pencil, Plus, Power, Trash2 } from 'lucide-react';
+import { BellRing, Mail, MessageSquare, Pencil, Plus, ShieldAlert, Trash2 } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { displayRole, fmtMoney } from '@/lib/format';
@@ -33,15 +33,65 @@ interface WorkflowDef { id: string; code: string; name: string; description: str
  * OSH/STH = Operations & Site Head · GFD = Group Functional Director
  */
 const DOA_ROLES = ['HOS', 'HOD', 'HOF', 'OSH_STH', 'GFD'];
-/** Roles that can hold a step inside an invoice workflow. */
-const APPROVAL_ROLES = ['AP_REVIEWER', 'TAX_REVIEWER'];
-const ESCALATION_ROLES = ['', 'AP_REVIEWER', 'ADMINISTRATOR'];
 /** The agreed four-level approval structure. */
 const LEVELS = [1, 2, 3, 4] as const;
 
-interface StepDraft {
-  name: string; role: string; approverType: string; slaHours: number;
-  amountThresholdMin: number | null; taxStep: boolean; escalationTo: string; notify: boolean; position: number;
+/**
+ * Reference values from BPD v0.1.4 §11.4. These are surfaced here so an
+ * administrator can see the full approval-lifecycle in one place; the actual
+ * cadence lives in SLA Management and is what the notification engine reads.
+ */
+const REMINDER_SCHEDULE = [
+  { n: 1, label: '1st reminder', after: '24 hours', recipient: 'Approver', channel: 'Email' as const },
+  { n: 2, label: '2nd reminder', after: '48 hours', recipient: 'Approver', channel: 'Email' as const },
+  { n: 3, label: '3rd reminder', after: '3 days', recipient: 'Approver + AP Manager', channel: 'Email' as const },
+  { n: 4, label: 'Final reminder', after: '5 days', recipient: 'Approver + AP Manager', channel: 'Email' as const },
+];
+
+const ESCALATION_LADDER = [
+  { n: 1, trigger: 'No action after 5-day final reminder', action: 'Auto-escalate to next DoA level', target: 'Next approver', channel: 'Teams + Email' as const },
+  { n: 2, trigger: 'No further DoA level exists', action: 'Escalate to AP Manager', target: 'AP Manager', channel: 'Teams + Email' as const },
+  { n: 3, trigger: 'All escalations', action: 'Log timestamp and SLA-breach reason', target: 'Audit trail', channel: 'In-platform' as const },
+];
+
+const VENDOR_CHASE = [
+  { n: 1, label: '1st notification', trigger: 'On detection of missing document', recipient: 'Vendor', drafter: 'System · AP sends' },
+  { n: 2, label: '1st reminder', trigger: 'Every 7 days while document still missing', recipient: 'Vendor', drafter: 'System · AP sends' },
+  { n: 3, label: 'Escalation', trigger: 'After 1st reminder with no response', recipient: 'Head of Function (HOF)', drafter: 'System' },
+];
+
+const DOA_ROLE_LEGEND: { code: string; name: string }[] = [
+  { code: 'HOS', name: 'Head of Section' },
+  { code: 'HOD', name: 'Head of Department' },
+  { code: 'HOF', name: 'Head of Function' },
+  { code: 'OSH / STH', name: 'Operations & Site Head' },
+  { code: 'GFD', name: 'Group Functional Director' },
+];
+
+/** Small icon-first tag used inside reference tables (Teams / Email / In-platform). */
+function ChannelTag({ value }: { value: string }) {
+  const teams = value.includes('Teams');
+  const email = value.includes('Email');
+  const platform = value.includes('platform');
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1">
+      {teams && (
+        <span className="inline-flex items-center gap-1 rounded bg-semantic-pendingBg px-1.5 py-0.5 text-2xs font-semibold uppercase tracking-wide text-semantic-pending">
+          <MessageSquare size={10} /> Teams
+        </span>
+      )}
+      {email && (
+        <span className="inline-flex items-center gap-1 rounded bg-line-soft px-1.5 py-0.5 text-2xs font-semibold uppercase tracking-wide text-ink-secondary">
+          <Mail size={10} /> Email
+        </span>
+      )}
+      {platform && (
+        <span className="inline-flex items-center gap-1 rounded bg-semantic-successBg px-1.5 py-0.5 text-2xs font-semibold uppercase tracking-wide text-semantic-success">
+          In-platform
+        </span>
+      )}
+    </span>
+  );
 }
 
 /** One amount range with the role configured at each of the four levels. */
@@ -60,10 +110,6 @@ export default function WorkflowsPage() {
   const qc = useQueryClient();
   const [editingBand, setEditingBand] = useState<{ original?: HierarchyRow; minAmount: number; maxAmount: number | null; levelRoles: Record<number, string> } | null>(null);
   const [deletingBand, setDeletingBand] = useState<HierarchyRow | null>(null);
-  const [stepModal, setStepModal] = useState<{ wf: WorkflowDef; original?: StepDef; draft: StepDraft } | null>(null);
-  const [deletingStep, setDeletingStep] = useState<{ wf: WorkflowDef; step: StepDef } | null>(null);
-  const [newWf, setNewWf] = useState<{ name: string; description: string; categoryId: string } | null>(null);
-  const [deletingWf, setDeletingWf] = useState<WorkflowDef | null>(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ['approval-matrix'],
@@ -107,7 +153,12 @@ export default function WorkflowsPage() {
     return hierarchy.some((r) => {
       if (editingBand.original && r.key === editingBand.original.key) return false;
       const rMax = r.maxAmount ?? Number.POSITIVE_INFINITY;
-      return min < rMax && r.minAmount < max;
+      // Inclusive comparison so adjacent bands cannot share a boundary
+      // (e.g. Band 1 ending at 2,000,000 and Band 2 starting at 2,000,000
+      // would both match an invoice of exactly 2,000,000 and trigger two
+      // different approval workflows). From must be at least 1 higher than
+      // the previous band's To.
+      return min <= rMax && r.minAmount <= max;
     });
   }, [editingBand, hierarchy]);
 
@@ -153,65 +204,33 @@ export default function WorkflowsPage() {
     setDeletingBand(null);
   };
 
-  /** Open the step editor for an existing step or a new step at `position` (1-based). */
-  const openStepModal = (wf: WorkflowDef, original?: StepDef, position?: number) => {
-    setStepModal({
-      wf,
-      original,
-      draft: original
-        ? {
-            name: original.name, role: original.role, approverType: original.approverType, slaHours: original.slaHours,
-            amountThresholdMin: original.amountThresholdMin ?? null, taxStep: Boolean(original.taxStep),
-            escalationTo: original.escalationTo ?? '', notify: original.notify, position: original.stepNo,
-          }
-        : {
-            name: '', role: 'AP_REVIEWER', approverType: 'ROLE', slaHours: 24,
-            amountThresholdMin: null, taxStep: false, escalationTo: '', notify: true,
-            position: position ?? wf.steps.length + 1,
-          },
-    });
-  };
-
-  const saveStep = () => {
-    if (!stepModal) return;
-    const { wf, original, draft } = stepModal;
-    let steps = wf.steps.filter((s) => !(original && s.stepNo === original.stepNo));
-    const step: StepDef = {
-      stepNo: 0, name: draft.name.trim(), role: draft.role, approverType: draft.approverType,
-      slaHours: Math.max(1, draft.slaHours), notify: draft.notify, taxStep: draft.taxStep || undefined,
-      amountThresholdMin: draft.amountThresholdMin ?? undefined, escalationTo: draft.escalationTo || undefined,
-    };
-    const pos = Math.min(Math.max(1, draft.position), steps.length + 1);
-    steps.splice(pos - 1, 0, step);
-    steps = steps.map((s, i) => ({ ...s, stepNo: i + 1 }));
-    entity.mutate({ entity: 'workflows', op: 'UPDATE', row: { id: wf.id, steps } });
-    setStepModal(null);
-  };
-
-  const removeStep = () => {
-    if (!deletingStep) return;
-    const steps = deletingStep.wf.steps
-      .filter((s) => s.stepNo !== deletingStep.step.stepNo)
-      .map((s, i) => ({ ...s, stepNo: i + 1 }));
-    entity.mutate({ entity: 'workflows', op: 'UPDATE', row: { id: deletingStep.wf.id, steps } });
-    setDeletingStep(null);
-  };
-
   return (
     <div className="space-y-4">
       <PageHeader
         breadcrumb={[{ label: 'Home', to: '/' }, { label: 'Administration' }, { label: 'Workflows & Approval Hierarchy' }]}
         title="Workflows & Approval Hierarchy"
-        description="Approval applies to Non-PO invoices. Who approves is decided by the invoice amount alone — every level in the band approves in sequence and no level is skipped."
-        actions={canEdit ? <Button size="sm" onClick={() => setNewWf({ name: '', description: '', categoryId: '' })}><CirclePlus size={13} /> Add workflow</Button> : undefined}
       />
 
       {/* --------------------------------------------- approval hierarchy */}
       <Card
-        title="Approval hierarchy"
+        title={
+          <span>
+            Approval hierarchy
+            <span className="ml-2 text-2xs font-normal text-ink-muted">Non-PO</span>
+          </span>
+        }
         pad={false}
         actions={canEdit ? <Button size="sm" variant="secondary" onClick={() => openBandEditor()}><Plus size={13} /> Add amount range</Button> : undefined}
       >
+        {/* Role legend — the columns use acronyms, so spell them out once at the top */}
+        <div className="flex flex-wrap items-center gap-1.5 border-b border-line bg-white px-4 py-2 text-2xs text-ink-muted">
+          <span className="mr-1 font-semibold uppercase tracking-wide">Roles</span>
+          {DOA_ROLE_LEGEND.map((r) => (
+            <span key={r.code} className="inline-flex items-center gap-1 rounded-full border border-line bg-line-soft px-2 py-0.5">
+              <span className="font-semibold text-ink">{r.code}</span> {r.name}
+            </span>
+          ))}
+        </div>
         <DataTable
           dense
           columns={[
@@ -241,6 +260,13 @@ export default function WorkflowsPage() {
           rows={hierarchy}
           rowKey={(r) => r.key}
         />
+        <div className="flex flex-wrap items-center gap-3 border-t border-line bg-line-soft/40 px-4 py-2 text-2xs text-ink-muted">
+          <span>Bands must cover <span className="font-semibold text-ink">0 → ∞</span> with no gaps.</span>
+          <span className="text-line-strong">·</span>
+          <span>
+            <span className="font-semibold text-semantic-warning">[TO BE CONFIRMED]</span> Named approvers per department — pending complete DoA matrix from ESSA (BPD §11.2).
+          </span>
+        </div>
       </Card>
 
       {/* --------------------------------------------- workflow definitions */}
@@ -248,86 +274,138 @@ export default function WorkflowsPage() {
         <Card
           key={wf.id}
           title={<span>{wf.name} <span className="ml-2 text-2xs font-normal text-ink-muted">{wf.categoryId ? lookups?.categories.find((c) => c.id === wf.categoryId)?.name : 'All Non-PO categories'}</span></span>}
-          actions={
-            <span className="flex items-center gap-2">
-              <StatusBadge value={wf.status} />
-              {canEdit && (
-                <>
-                  <Button
-                    size="sm" variant="ghost"
-                    title={wf.status === 'ACTIVE' ? 'Disable this workflow' : 'Enable this workflow'}
-                    onClick={() => entity.mutate({ entity: 'workflows', op: 'TOGGLE', row: { id: wf.id } })}
-                  >
-                    <Power size={13} /> {wf.status === 'ACTIVE' ? 'Disable' : 'Enable'}
-                  </Button>
-                  <Button
-                    size="sm" variant="ghost"
-                    title="Copy this workflow as a starting point for a new one"
-                    onClick={() => entity.mutate({
-                      entity: 'workflows', op: 'CREATE',
-                      row: {
-                        code: `${wf.code}-COPY`, name: `${wf.name} (Copy)`, description: wf.description,
-                        categoryId: wf.categoryId, status: 'INACTIVE', version: 'v1',
-                        steps: wf.steps.map((s) => ({ ...s })),
-                      },
-                    })}
-                  >
-                    <Copy size={13} /> Copy
-                  </Button>
-                  <Button size="sm" variant="ghost" className="text-semantic-error" title="Delete this workflow" onClick={() => setDeletingWf(wf)}>
-                    <Trash2 size={13} />
-                  </Button>
-                </>
-              )}
-            </span>
-          }
+          actions={<StatusBadge value={wf.status} />}
         >
           <p className="mb-3 text-xs text-ink-muted">{wf.description}</p>
-          <div className="overflow-x-auto">
-            <div className="flex min-w-max items-center gap-0 py-1">
-              <div className="rounded-md border-2 border-essa-600 bg-essa-600 px-3 py-1.5 text-xs font-bold text-white">START</div>
-              {wf.steps.map((s) => (
-                <div key={s.stepNo} className="flex items-center">
-                  <span className="h-0.5 w-6 bg-essa-400" />
-                  <div className="group relative w-48 rounded-lg border border-line bg-white p-2.5 shadow-card transition-colors hover:border-essa-300">
-                    {canEdit && (
-                      <span className="absolute right-1 top-1 hidden gap-0.5 rounded-md bg-white/90 group-hover:flex">
-                        <Button size="sm" variant="ghost" aria-label={`Edit step ${s.name}`} onClick={() => openStepModal(wf, s)}><Pencil size={12} /></Button>
-                        <Button size="sm" variant="ghost" aria-label={`Delete step ${s.name}`} className="text-semantic-error" onClick={() => setDeletingStep({ wf, step: s })}><Trash2 size={12} /></Button>
-                      </span>
-                    )}
-                    <p className="text-xs font-semibold text-ink">Level {s.stepNo} · {s.name}</p>
-                    <p className="text-2xs text-ink-muted">{s.approverType === 'DOA' ? 'By approval hierarchy (invoice amount)' : displayRole(s.role)}</p>
-                    <div className="mt-1.5 flex flex-wrap gap-1">
-                      <Badge tone="neutral">SLA {s.slaHours}h</Badge>
-                      {s.taxStep && <Badge tone="info">Tax review</Badge>}
-                      {s.amountThresholdMin != null && <Badge tone="warning">From {fmtMoney(s.amountThresholdMin)}</Badge>}
-                      {s.escalationTo && <Badge tone="pending">Escalates to {displayRole(s.escalationTo)}</Badge>}
+          <div className="space-y-4">
+            {hierarchy.map((band, bi) => {
+              // Expand the workflow for this band: the "By approval hierarchy"
+              // step becomes the band's own DoA levels, and steps that only
+              // apply from a threshold amount are shown only in the bands they
+              // can actually run in.
+              const cells: { key: string; name: string; sub: string; sla: number; tax?: boolean; escalationTo?: string }[] = [];
+              for (const s of wf.steps) {
+                if (s.approverType === 'DOA') {
+                  for (const l of LEVELS) {
+                    const d = band.levels[l];
+                    if (d) cells.push({ key: `s${s.stepNo}-doa${l}`, name: displayRole(d.role), sub: `Approval hierarchy · DoA level ${l}`, sla: s.slaHours, escalationTo: s.escalationTo });
+                  }
+                } else if (s.amountThresholdMin == null || (band.maxAmount ?? Number.POSITIVE_INFINITY) >= s.amountThresholdMin) {
+                  cells.push({ key: `s${s.stepNo}`, name: s.name, sub: displayRole(s.role), sla: s.slaHours, tax: s.taxStep, escalationTo: s.escalationTo });
+                }
+              }
+              return (
+                <div key={band.key}>
+                  <div className="mb-1.5 flex flex-wrap items-center gap-2 text-2xs">
+                    <span className="rounded bg-essa-50 px-2 py-0.5 font-semibold text-essa-700">Band {bi + 1}</span>
+                    <span className="font-medium text-ink">
+                      {fmtMoney(band.minAmount)} — {band.maxAmount != null ? fmtMoney(band.maxAmount) : 'No limit'}
+                    </span>
+                    <span className="text-ink-muted">· {cells.length} approval level{cells.length === 1 ? '' : 's'}</span>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <div className="flex min-w-max items-center gap-0 py-1">
+                      <div className="rounded-md border-2 border-essa-600 bg-essa-600 px-3 py-1.5 text-xs font-bold text-white">START</div>
+                      {cells.map((c, i) => (
+                        <div key={c.key} className="flex items-center">
+                          <span className="h-0.5 w-6 bg-essa-400" />
+                          <div className="w-44 rounded-lg border border-line bg-white p-2.5 shadow-card">
+                            <p className="text-xs font-semibold text-ink">Level {i + 1} · {c.name}</p>
+                            <p className="text-2xs text-ink-muted">{c.sub}</p>
+                            <div className="mt-1.5 flex flex-wrap gap-1">
+                              <Badge tone="neutral">SLA {c.sla}h</Badge>
+                              {c.tax && <Badge tone="info">Tax review</Badge>}
+                              {c.escalationTo && <Badge tone="pending">Escalates to {displayRole(c.escalationTo)}</Badge>}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                      <span className="h-0.5 w-6 bg-essa-400" />
+                      <div className="rounded-md border-2 border-essa-600 bg-white px-3 py-1.5 text-xs font-bold text-essa-700">SAP PARKING</div>
                     </div>
                   </div>
                 </div>
-              ))}
-              {canEdit && (
-                <div className="flex items-center">
-                  <span className="h-0.5 w-6 bg-essa-400" />
-                  <button
-                    onClick={() => openStepModal(wf, undefined, wf.steps.length + 1)}
-                    className="flex items-center gap-1 rounded-lg border-2 border-dashed border-essa-300 px-3 py-2 text-xs font-medium text-essa-700 transition-colors hover:border-essa-500 hover:bg-essa-50"
-                  >
-                    <Plus size={13} /> Add level
-                  </button>
-                </div>
-              )}
-              <span className="h-0.5 w-6 bg-essa-400" />
-              <div className="rounded-md border-2 border-essa-600 bg-white px-3 py-1.5 text-xs font-bold text-essa-700">SAP PARKING</div>
-            </div>
+              );
+            })}
           </div>
           <p className="mt-2 text-2xs text-ink-muted">
-            A level runs only when the invoice meets its conditions; levels that do not apply are skipped.
-            {canEdit && ' Hover a level to edit or remove it. Changes apply to invoices that enter approval afterwards.'}
+            Each band shows the exact approval chain an invoice of that amount follows. A level runs only when the invoice meets its conditions (e.g. tax review only for service invoices); levels that do not apply are skipped. This workflow is defined by the BPD and is read-only.
           </p>
         </Card>
       ))}
+
+      {/* --------------------------------------------- reminders + escalation
+        * BPD §11.4 fixes both cadences. Values live in SLA Management; we
+        * render them here as read-only reference so an admin sees the whole
+        * approval-lifecycle without navigating away. */}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card
+          title={<span className="inline-flex items-center gap-2"><BellRing size={13} className="text-essa-600" /> Reminders <span className="text-2xs font-normal text-ink-muted">If approver takes no action</span></span>}
+          pad={false}
+        >
+          <DataTable
+            dense
+            columns={[
+              { key: 'n', header: '#', align: 'center', render: (r: typeof REMINDER_SCHEDULE[number]) => <span className="font-semibold text-ink-muted">{r.n}</span> },
+              { key: 'label', header: 'Reminder', render: (r) => <span className="font-medium">{r.label}</span> },
+              { key: 'after', header: 'Triggered after', render: (r) => <span className="whitespace-nowrap">{r.after}</span> },
+              { key: 'recipient', header: 'Recipient', render: (r) => <span>{r.recipient}</span> },
+              { key: 'channel', header: 'Channel', render: (r) => <ChannelTag value={r.channel} /> },
+            ] satisfies Column<typeof REMINDER_SCHEDULE[number]>[]}
+            rows={REMINDER_SCHEDULE}
+            rowKey={(r) => String(r.n)}
+          />
+          <p className="border-t border-line bg-line-soft/40 px-4 py-2 text-2xs text-ink-muted">
+            Initial approval request is sent via <span className="font-semibold text-ink">Teams card + Email</span> simultaneously; the first action on either resolves the approval.
+          </p>
+        </Card>
+
+        <Card
+          title={<span className="inline-flex items-center gap-2"><ShieldAlert size={13} className="text-semantic-error" /> Escalation ladder <span className="text-2xs font-normal text-ink-muted">If SLA breached after all reminders</span></span>}
+          pad={false}
+        >
+          <DataTable
+            dense
+            columns={[
+              { key: 'n', header: '#', align: 'center', render: (r: typeof ESCALATION_LADDER[number]) => <span className="font-semibold text-ink-muted">{r.n}</span> },
+              { key: 'trigger', header: 'Trigger', render: (r) => <span>{r.trigger}</span> },
+              { key: 'action', header: 'Action', render: (r) => <span className="font-medium">{r.action}</span> },
+              { key: 'target', header: 'Target', render: (r) => <span>{r.target}</span> },
+              { key: 'channel', header: 'Channel', render: (r) => <ChannelTag value={r.channel} /> },
+            ] satisfies Column<typeof ESCALATION_LADDER[number]>[]}
+            rows={ESCALATION_LADDER}
+            rowKey={(r) => String(r.n)}
+          />
+          <p className="border-t border-line bg-line-soft/40 px-4 py-2 text-2xs text-ink-muted">
+            Escalation preserves the original approver — either the escalated recipient or the original approver can resolve the request.
+          </p>
+        </Card>
+      </div>
+
+      {/* --------------------------------------------- vendor chase
+        * BPD §11.4 — missing mandatory document. AP team reviews and sends the
+        * system-drafted email; weekly follow-ups; escalates to HOF. */}
+      <Card
+        title={<span className="inline-flex items-center gap-2"><Mail size={13} className="text-essa-600" /> Vendor chase <span className="text-2xs font-normal text-ink-muted">Missing mandatory document</span></span>}
+        pad={false}
+      >
+        <DataTable
+          dense
+          columns={[
+            { key: 'n', header: '#', align: 'center', render: (r: typeof VENDOR_CHASE[number]) => <span className="font-semibold text-ink-muted">{r.n}</span> },
+            { key: 'label', header: 'Notification / Reminder', render: (r) => <span className="font-medium">{r.label}</span> },
+            { key: 'trigger', header: 'Triggered', render: (r) => <span>{r.trigger}</span> },
+            { key: 'recipient', header: 'Recipient', render: (r) => <span>{r.recipient}</span> },
+            { key: 'channel', header: 'Channel', render: () => <ChannelTag value="Email" /> },
+            { key: 'drafter', header: 'Drafted by', render: (r) => <span className="text-ink-muted">{r.drafter}</span> },
+          ] satisfies Column<typeof VENDOR_CHASE[number]>[]}
+          rows={VENDOR_CHASE}
+          rowKey={(r) => String(r.n)}
+        />
+        <p className="border-t border-line bg-line-soft/40 px-4 py-2 text-2xs text-ink-muted">
+          All intervals in this module are configurable by the Administrator — <span className="font-semibold text-ink">no code changes required</span> (BPD §11.4).
+        </p>
+      </Card>
 
       {/* ------------------------------------------------ amount-range editor */}
       <Modal
@@ -364,7 +442,7 @@ export default function WorkflowsPage() {
             </div>
             {bandOverlaps && (
               <p className="rounded-md bg-semantic-warningBg px-2.5 py-1.5 text-2xs text-semantic-warning">
-                This amount range overlaps another band. Adjust the From / To amounts so every invoice amount falls in exactly one band.
+                This amount range overlaps or touches another band. Bands must not share a boundary — set From at least 1 higher than the previous band’s To (e.g. 2,000,001, not 2,000,000) so every invoice amount falls in exactly one band.
               </p>
             )}
             <div className="grid gap-3 md:grid-cols-4">
@@ -396,151 +474,6 @@ export default function WorkflowsPage() {
         message={<p className="text-xs">The approval levels configured for invoices between {fmtMoney(deletingBand?.minAmount)} and {deletingBand?.maxAmount != null ? fmtMoney(deletingBand.maxAmount) : 'no limit'} are removed. Invoices already in approval are unaffected.</p>}
       />
 
-      {/* ------------------------------------------------ new workflow */}
-      <Modal
-        open={Boolean(newWf)}
-        onClose={() => setNewWf(null)}
-        title="Add workflow"
-        footer={
-          <>
-            <Button variant="ghost" onClick={() => setNewWf(null)}>Cancel</Button>
-            <Button
-              disabled={!newWf?.name.trim()}
-              loading={entity.isPending}
-              onClick={() => {
-                if (!newWf) return;
-                entity.mutate({
-                  entity: 'workflows', op: 'CREATE',
-                  row: {
-                    code: `WF-${newWf.name.trim().toUpperCase().replace(/[^A-Z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 28) || 'CUSTOM'}`,
-                    name: newWf.name.trim(),
-                    description: newWf.description.trim(),
-                    categoryId: newWf.categoryId || undefined,
-                    status: 'ACTIVE', version: 'v1', steps: [],
-                  },
-                });
-                setNewWf(null);
-              }}
-            >
-              Create workflow
-            </Button>
-          </>
-        }
-      >
-        <div className="space-y-3">
-          <Field label="Workflow name" required>
-            <Input value={newWf?.name ?? ''} onChange={(e) => setNewWf((p) => p && ({ ...p, name: e.target.value }))} placeholder="e.g. Non-PO approval — high value" />
-          </Field>
-          <Field label="Description">
-            <Input value={newWf?.description ?? ''} onChange={(e) => setNewWf((p) => p && ({ ...p, description: e.target.value }))} placeholder="e.g. four approval levels for high-value invoices" />
-          </Field>
-          <Field label="Category" hint="Leave blank to apply to all Non-PO categories">
-            <Select value={newWf?.categoryId ?? ''} onChange={(e) => setNewWf((p) => p && ({ ...p, categoryId: e.target.value }))} className="w-full">
-              <option value="">All Non-PO categories</option>
-              {lookups?.categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </Select>
-          </Field>
-        </div>
-      </Modal>
-
-      <ConfirmDialog
-        open={Boolean(deletingWf)}
-        onClose={() => setDeletingWf(null)}
-        onConfirm={() => {
-          if (deletingWf) entity.mutate({ entity: 'workflows', op: 'DELETE', row: { id: deletingWf.id } });
-          setDeletingWf(null);
-        }}
-        loading={entity.isPending}
-        tone="danger"
-        title={`Delete workflow — ${deletingWf?.name}`}
-        confirmLabel="Delete workflow"
-        message={<p className="text-xs">The workflow and its {deletingWf?.steps.length ?? 0} level(s) are removed. Invoices already in approval keep the levels they started with.</p>}
-      />
-
-      {/* ------------------------------------------------ workflow level editor */}
-      <Modal
-        open={Boolean(stepModal)}
-        onClose={() => setStepModal(null)}
-        title={stepModal?.original ? `Edit level — ${stepModal.original.name}` : `Add level — ${stepModal?.wf.name ?? ''}`}
-        footer={
-          <>
-            <Button variant="ghost" onClick={() => setStepModal(null)}>Cancel</Button>
-            <Button disabled={!stepModal?.draft.name.trim()} loading={entity.isPending} onClick={saveStep}>Save</Button>
-          </>
-        }
-      >
-        {stepModal && (
-          <div className="space-y-3">
-            <div className="grid gap-3 md:grid-cols-2">
-              <Field label="Level name" required>
-                <Input value={stepModal.draft.name} onChange={(e) => setStepModal((p) => p && ({ ...p, draft: { ...p.draft, name: e.target.value } }))} placeholder="e.g. Finance review" />
-              </Field>
-              <Field label="Position" hint={`1 – ${stepModal.wf.steps.length + (stepModal.original ? 0 : 1)}`}>
-                <Input
-                  type="number" min={1} max={stepModal.wf.steps.length + (stepModal.original ? 0 : 1)}
-                  value={stepModal.draft.position}
-                  onChange={(e) => setStepModal((p) => p && ({ ...p, draft: { ...p.draft, position: Number(e.target.value) } }))}
-                />
-              </Field>
-              <Field label="Approver" hint="By approval hierarchy uses the amount band table above">
-                <Select value={stepModal.draft.approverType} onChange={(e) => setStepModal((p) => p && ({ ...p, draft: { ...p.draft, approverType: e.target.value } }))} className="w-full">
-                  <option value="ROLE">A role</option>
-                  <option value="DOA">By approval hierarchy</option>
-                </Select>
-              </Field>
-              <Field label="Role">
-                <Select value={stepModal.draft.role} onChange={(e) => setStepModal((p) => p && ({ ...p, draft: { ...p.draft, role: e.target.value } }))} className="w-full">
-                  {APPROVAL_ROLES.map((r) => <option key={r} value={r}>{displayRole(r)}</option>)}
-                </Select>
-              </Field>
-              <Field label="SLA (hours)">
-                <Input type="number" min={1} value={stepModal.draft.slaHours} onChange={(e) => setStepModal((p) => p && ({ ...p, draft: { ...p.draft, slaHours: Number(e.target.value) } }))} />
-              </Field>
-              <Field label="Applies from amount" hint="Leave blank to always run">
-                <Input
-                  type="number" min={0}
-                  value={stepModal.draft.amountThresholdMin ?? ''}
-                  onChange={(e) => setStepModal((p) => p && ({ ...p, draft: { ...p.draft, amountThresholdMin: e.target.value === '' ? null : Number(e.target.value) } }))}
-                />
-              </Field>
-              <Field label="Escalate to when the SLA is breached">
-                <Select value={stepModal.draft.escalationTo} onChange={(e) => setStepModal((p) => p && ({ ...p, draft: { ...p.draft, escalationTo: e.target.value } }))} className="w-full">
-                  {ESCALATION_ROLES.map((r) => <option key={r} value={r}>{r ? displayRole(r) : 'No escalation'}</option>)}
-                </Select>
-              </Field>
-              <div className="flex flex-col justify-end gap-2 pb-1">
-                <label className="flex items-center gap-2 text-xs text-ink-secondary">
-                  <input
-                    type="checkbox" className="h-3.5 w-3.5 accent-essa-600"
-                    checked={stepModal.draft.taxStep}
-                    onChange={(e) => setStepModal((p) => p && ({ ...p, draft: { ...p.draft, taxStep: e.target.checked } }))}
-                  />
-                  Tax review level (runs only when tax review is required)
-                </label>
-                <label className="flex items-center gap-2 text-xs text-ink-secondary">
-                  <input
-                    type="checkbox" className="h-3.5 w-3.5 accent-essa-600"
-                    checked={stepModal.draft.notify}
-                    onChange={(e) => setStepModal((p) => p && ({ ...p, draft: { ...p.draft, notify: e.target.checked } }))}
-                  />
-                  Notify the approver by Teams and email
-                </label>
-              </div>
-            </div>
-          </div>
-        )}
-      </Modal>
-
-      <ConfirmDialog
-        open={Boolean(deletingStep)}
-        onClose={() => setDeletingStep(null)}
-        onConfirm={removeStep}
-        loading={entity.isPending}
-        tone="danger"
-        title={`Remove level ${deletingStep?.step.stepNo} — ${deletingStep?.step.name}`}
-        confirmLabel="Remove level"
-        message={<p className="text-xs">The level is removed from <span className="font-semibold">{deletingStep?.wf.name}</span> and the remaining levels are renumbered. Invoices already in approval keep their current flow.</p>}
-      />
     </div>
   );
 }

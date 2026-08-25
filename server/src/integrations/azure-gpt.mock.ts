@@ -44,6 +44,13 @@ function seededRandom(seed: string): () => number {
 
 /** Derive a plausible extracted value for a configured field from invoice context. */
 function deriveValue(invoice: Invoice, field: DocumentField, rnd: () => number, docTypeCode?: string): string {
+  // Seeded ground truth from the vendor documents wins over any derivation.
+  const facts = invoice.facts;
+  if (facts) {
+    const specific = docTypeCode ? facts[`${docTypeCode}.${field.fieldCode}`] : undefined;
+    if (specific !== undefined) return specific;
+    if (facts[field.fieldCode] !== undefined) return facts[field.fieldCode];
+  }
   // Cross-document consistency: values that participate in N-way reconciliation
   // are derived from the same invoice truth so seeded scenarios reconcile.
   const mealCount = Math.max(50, Math.round(invoice.subtotal / 150));
@@ -60,7 +67,7 @@ function deriveValue(invoice: Invoice, field: DocumentField, rnd: () => number, 
     case 'VENDOR_NAME': return invoice.vendorName;
     // Indonesian tax id (NPWP) format — the platform runs on ESSA Indonesia.
     case 'VENDOR_TAX_NUMBER':
-      return `${Math.floor(10 + rnd() * 89)}.${Math.floor(100 + rnd() * 899)}.${Math.floor(100 + rnd() * 899)}.${Math.floor(1 + rnd() * 8)}-${Math.floor(100 + rnd() * 899)}.000`;
+      return getDb().vendors.find((v) => v.code === invoice.vendorCode)?.gstin ?? '';
     case 'PO_NUMBER': return invoice.poNumber ?? '';
     case 'INVOICE_AMOUNT': return String(invoice.amount);
     case 'INVOICE_SUBTOTAL': return String(invoice.subtotal);
@@ -68,6 +75,11 @@ function deriveValue(invoice: Invoice, field: DocumentField, rnd: () => number, 
     case 'CURRENCY': return invoice.currency;
     // Non-PO invoices carry a cost object rather than a PO (BPD §10.4).
     case 'COST_CENTER': return 'CC-' + Math.floor(1100 + rnd() * 3900);
+    case 'INVOICE_GROSS_VALUE': return String(invoice.subtotal);
+    case 'SES_VALUE': {
+      const ses = invoice.poNumber ? getDb().sapSes.find((s) => s.poNumber === invoice.poNumber) : undefined;
+      return String(ses?.acceptedAmount ?? invoice.subtotal);
+    }
     case 'DESCRIPTION': return invoice.description;
     case 'GRN_NUMBER': {
       // The document carries the real GRN number - read it from reference data
@@ -84,8 +96,8 @@ function deriveValue(invoice: Invoice, field: DocumentField, rnd: () => number, 
     case 'MEAL_COUNT': return String(Math.max(50, Math.round(invoice.subtotal / 150)));
     case 'UNIT_RATE': return (invoice.subtotal / Math.max(1, Math.round(invoice.subtotal / 42000))).toFixed(2);
     case 'QUANTITY': return String(Math.max(1, Math.round(invoice.subtotal / 42000)));
-    case 'PERIOD_FROM': return invoice.invoiceDate.slice(0, 8) + '01';
-    case 'PERIOD_TO': return invoice.invoiceDate;
+    case 'PERIOD_FROM': return invoice.servicePeriodFrom ?? invoice.invoiceDate.slice(0, 8) + '01';
+    case 'PERIOD_TO': return invoice.servicePeriodTo ?? invoice.invoiceDate;
     case 'PROGRESS_PCT': return String(Math.min(100, 60 + Math.floor(rnd() * 40)));
     default:
       if (field.dataType === 'DATE') return invoice.invoiceDate;

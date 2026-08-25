@@ -138,17 +138,27 @@ export default function InvoiceListPage() {
     refetchInterval: 15_000,
   });
 
-  const sortBy = params.get('sortBy') ?? 'receivedAt';
-  const sortDir = (params.get('sortDir') as 'asc' | 'desc') ?? 'desc';
+  /**
+   * Newest first is the queue's own order, not a sort the reader chose, so the
+   * header shows no arrow until a column is actually sorted and returns here on
+   * the third click (review, 25 Aug).
+   */
+  const sortBy = params.get('sortBy') ?? undefined;
+  const sortDir = (params.get('sortDir') as 'asc' | 'desc' | null) ?? undefined;
   /**
    * Both parameters have to move in a single update: two calls to setParam in a
    * row each rebuild from the same render's params, so the second silently
    * dropped the column being sorted and only the direction ever changed.
    */
-  const onSort = (key: string) => {
+  const onSort = (key: string, dir: 'asc' | 'desc' | null) => {
     const next = new URLSearchParams(params);
-    next.set('sortBy', key);
-    next.set('sortDir', sortBy === key && sortDir === 'asc' ? 'desc' : 'asc');
+    if (dir) {
+      next.set('sortBy', key);
+      next.set('sortDir', dir);
+    } else {
+      next.delete('sortBy');
+      next.delete('sortDir');
+    }
     next.delete('page');
     setParams(next, { replace: true });
   };
@@ -362,11 +372,20 @@ export default function InvoiceListPage() {
               className="relative"
               onSubmit={(e) => {
                 e.preventDefault();
-                setParam('search', searchDraft || undefined);
+                setParam('search', searchDraft.trim() || undefined);
               }}
             >
               <Search size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-faint" />
-              <Input value={searchDraft} onChange={(e) => setSearchDraft(e.target.value)} placeholder="Invoice, vendor or PO number…" className="w-60 pl-8" aria-label="Search invoices" />
+              {/* Enter or leaving the field both search, so a typed term is never
+                  silently ignored (same on Vendors and Purchase Orders). */}
+              <Input
+                value={searchDraft}
+                onChange={(e) => setSearchDraft(e.target.value)}
+                onBlur={() => setParam('search', searchDraft.trim() || undefined)}
+                placeholder="Invoice, vendor or PO number…"
+                className="w-60 pl-8"
+                aria-label="Search invoices"
+              />
             </form>
           </FilterField>
           <FilterField label="Current Status">

@@ -18,7 +18,13 @@ import BiometricPage from './pages/BiometricPage';
 import ReportsPage from './pages/ReportsPage';
 import ConfigurationPage from './pages/admin/ConfigurationPage';
 import WorkflowsPage from './pages/admin/WorkflowsPage';
-import SlaPage from './pages/admin/SlaPage';
+import SlaPoliciesPage from './pages/admin/sla/SlaPoliciesPage';
+import SlaPolicyEditor from './pages/admin/sla/SlaPolicyEditor';
+import { EscalationRulesPage, ReminderRulesPage } from './pages/admin/sla/SlaRulesPages';
+import BusinessCalendarPage from './pages/admin/sla/BusinessCalendarPage';
+import SlaSimulationPage from './pages/admin/sla/SlaSimulationPage';
+import SlaMonitorPage from './pages/admin/sla/SlaMonitorPage';
+import ExceptionCodesPage from './pages/admin/ExceptionCodesPage';
 import UsersPage from './pages/admin/UsersPage';
 import PurchaseOrdersPage from './pages/PurchaseOrdersPage';
 import AuditLogPage from './pages/AuditLogPage';
@@ -61,7 +67,16 @@ export default function App() {
       <Route path="/ingestion" element={<Navigate to="/invoices" replace />} />
       <Route path="/reports" element={<Guard perm="REPORT_VIEW"><ReportsPage /></Guard>} />
       <Route path="/admin/configuration" element={<Guard perm="CONFIG_VIEW"><ConfigurationPage /></Guard>} />
-      <Route path="/admin/sla" element={<Guard perm="CONFIG_VIEW"><SlaPage /></Guard>} />
+      {/* Administration → SLA Management (SLA Administration UI Specification §1.2) */}
+      <Route path="/admin/sla" element={<Guard perm="CONFIG_VIEW"><SlaPoliciesPage /></Guard>} />
+      <Route path="/admin/sla/policies/:id" element={<Guard perm="CONFIG_VIEW"><SlaPolicyEditor /></Guard>} />
+      <Route path="/admin/sla/reminders" element={<Guard perm="CONFIG_VIEW"><ReminderRulesPage /></Guard>} />
+      <Route path="/admin/sla/escalations" element={<Guard perm="CONFIG_VIEW"><EscalationRulesPage /></Guard>} />
+      <Route path="/admin/sla/calendar" element={<Guard perm="CONFIG_VIEW"><BusinessCalendarPage /></Guard>} />
+      <Route path="/admin/sla/simulation" element={<Guard perm="CONFIG_VIEW"><SlaSimulationPage /></Guard>} />
+      <Route path="/admin/sla/monitor" element={<Guard perm="CONFIG_VIEW"><SlaMonitorPage /></Guard>} />
+      <Route path="/admin/exception-codes" element={<Guard perm="CONFIG_VIEW"><ExceptionCodesPage /></Guard>} />
+      <Route path="/admin/sla/exception-codes" element={<Navigate to="/admin/exception-codes" replace />} />
       <Route path="/admin/workflows" element={<Guard perm="CONFIG_VIEW"><WorkflowsPage /></Guard>} />
       <Route path="/admin/users" element={<Guard perm="USER_ADMIN"><UsersPage /></Guard>} />
       <Route path="/audit" element={<Guard perm="AUDIT_VIEW"><AuditLogPage /></Guard>} />

@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { getDb, markDirty } from '../core/store';
-import { asyncHandler, authorize, requireAuth } from '../core/http';
+import { asyncHandler, authorize, pageParams, paginate, requireAuth, sortItems } from '../core/http';
 import { Errors } from '../core/errors';
 import { audit, systemAudit } from '../core/audit';
 import { ids, nowIso } from '../core/ids';
@@ -29,22 +29,53 @@ integrationRouter.get('/integrations/sap', authorize('SAP_VIEW'), asyncHandler((
   });
 }));
 
+/**
+ * SAP reference read model. Paged and sorted on the server (review, 25 Aug) so
+ * Purchase Orders behaves like the Invoice Workbench.
+ *
+ * This used to return the first 100 rows while reporting the true total, so
+ * anything past row 100 was unreachable and the count on screen disagreed with
+ * the list under it.
+ */
 integrationRouter.get('/integrations/sap/reference', authorize('SAP_VIEW'), asyncHandler((req, res) => {
   const db = getDb();
   const type = String(req.query.type ?? 'PO');
   const search = String(req.query.search ?? '').toLowerCase();
+  const p = pageParams(req);
+  const send = <T,>(items: T[], facets?: Record<string, string[]>) =>
+    res.json({ ...paginate(sortItems(items, p.sortBy, p.sortDir), p), ...(facets ? { facets } : {}) });
+  const uniq = (values: (string | undefined)[]) => [...new Set(values)].filter(Boolean).sort() as string[];
+
   if (type === 'PO') {
     let items = db.sapPurchaseOrders;
     if (search) items = items.filter((p) => [p.poNumber, p.vendorName, p.vendorCode].some((v) => v.toLowerCase().includes(search)));
-    res.json({ items: items.slice(0, 100), total: items.length });
+    if (req.query.status) items = items.filter((p) => p.status === req.query.status);
+    if (req.query.poType) items = items.filter((p) => p.poType === req.query.poType);
+    if (req.query.vendorCode) items = items.filter((p) => p.vendorCode === req.query.vendorCode);
+    // "Open" means value still to be invoiced against the order.
+    if (req.query.openOnly === 'true') items = items.filter((p) => p.openAmount > 0);
+    if (req.query.openOnly === 'false') items = items.filter((p) => p.openAmount <= 0);
+    // Facets are the values actually present, so a filter that would only ever
+    // offer one answer is not drawn at all.
+    send(items, {
+      statuses: uniq(db.sapPurchaseOrders.map((p) => p.status)),
+      poTypes: uniq(db.sapPurchaseOrders.map((p) => p.poType)),
+      openStates: [
+        ...(db.sapPurchaseOrders.some((p) => p.openAmount > 0) ? ['true'] : []),
+        ...(db.sapPurchaseOrders.some((p) => p.openAmount <= 0) ? ['false'] : []),
+      ],
+    });
   } else if (type === 'GRN') {
-    let items = db.sapGrns;
+    // GRN and SES values are in their PO's currency (Emerson POs are USD).
+    const currencyOf = (poNumber: string) => db.sapPurchaseOrders.find((p) => p.poNumber === poNumber)?.currency ?? 'IDR';
+    let items = db.sapGrns.map((g) => ({ ...g, currency: currencyOf(g.poNumber) }));
     if (search) items = items.filter((g) => [g.grnNumber, g.poNumber].some((v) => v.toLowerCase().includes(search)));
-    res.json({ items: items.slice(0, 100), total: items.length });
+    send(items);
   } else {
-    let items = db.sapSes;
+    const currencyOf = (poNumber: string) => db.sapPurchaseOrders.find((p) => p.poNumber === poNumber)?.currency ?? 'IDR';
+    let items = db.sapSes.map((x) => ({ ...x, currency: currencyOf(x.poNumber) }));
     if (search) items = items.filter((s) => [s.sesNumber, s.poNumber, s.serviceDescription].some((v) => v.toLowerCase().includes(search)));
-    res.json({ items: items.slice(0, 100), total: items.length });
+    send(items);
   }
 }));
 
@@ -136,7 +167,7 @@ integrationRouter.post('/integrations/biometric/push', asyncHandler((req, res) =
     const dup = db.attendanceRecords.some((x) => x.vendorCode === r.vendorCode && x.employeeId === r.employeeId && x.date === r.date);
     if (dup) { duplicates += 1; continue; }
     db.attendanceRecords.push({
-      id: ids.generic('ATT'), batchId, source: source ?? 'ESSA-MIS', site: r.site ?? 'Luwuk Plant',
+      id: ids.generic('ATT'), batchId, source: source ?? 'ESSA-MIS', site: r.site ?? 'Banggai Ammonia Plant',
       vendorCode: r.vendorCode, employeeId: r.employeeId, employeeName: r.employeeName ?? r.employeeId,
       date: r.date, present: r.present ?? true, hours: r.hours ?? 8, otHours: r.otHours ?? 0,
       mealEligible: r.mealEligible ?? true, pushedAt: nowIso(), status: 'ACCEPTED',

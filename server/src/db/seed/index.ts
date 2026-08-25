@@ -2,7 +2,7 @@ import type { Database } from '../../core/store';
 import { getDb, markDirty, persist } from '../../core/store';
 import { DAY, HOUR, ids, isoAgo } from '../../core/ids';
 import { DOA_MATRIX, PERMISSIONS, ROLES, USERS } from './identity';
-import { EXCEPTION_CODES, REMINDER_RULES, SLA_RULES } from './sla';
+import { BUSINESS_CALENDARS, EXCEPTION_CODES, SLA_POLICIES } from './sla';
 import { recomputeAllSla } from '../../core/sla';
 import {
   CATEGORIES, CATEGORY_DOCUMENTS, CONFIG_VERSIONS, DOCUMENT_FIELDS, DOCUMENT_TYPES,
@@ -18,7 +18,7 @@ import { techLog } from '../../core/logger';
  * Bump this whenever the seed dataset changes materially - existing local
  * snapshots reseed automatically on next server start.
  */
-export const SEED_VERSION = 3;
+export const SEED_VERSION = 6;
 
 export function buildBaseDb(): Database {
   return {
@@ -48,15 +48,19 @@ export function buildBaseDb(): Database {
     workflowInstances: [],
     workflowSteps: [],
     doaMatrix: structuredClone(DOA_MATRIX),
-    slaRules: structuredClone(SLA_RULES),
-    reminderRules: structuredClone(REMINDER_RULES),
+    slaPolicies: structuredClone(SLA_POLICIES),
+    businessCalendars: structuredClone(BUSINESS_CALENDARS),
     exceptionCodes: structuredClone(EXCEPTION_CODES),
     vendors: structuredClone(VENDORS),
     vendorControls: structuredClone(VENDOR_CONTROLS),
+    // All five PAU vendors are enabled and none is negative-listed (sample
+    // data). The history records their onboarding onto the AP automation.
     vendorControlHistory: [
-      { id: 'vch-1', vendorCode: 'V700052', action: 'NEGATIVE_MARKED', reason: 'Repeated billing discrepancies under investigation (internal audit ref IA-2026-114)', by: 'u-meera', byName: 'Maya Puspita', at: isoAgo(14 * DAY) },
-      { id: 'vch-2', vendorCode: 'V500033', action: 'DISABLED', reason: 'Pending contract renewal - AP automation suspended', by: 'u-meera', byName: 'Maya Puspita', at: isoAgo(21 * DAY) },
-      { id: 'vch-3', vendorCode: 'V400018', action: 'ENABLED', reason: 'Onboarding completed after successful pilot', by: 'u-suresh', byName: 'Surya Nugraha', at: isoAgo(60 * DAY) },
+      { id: 'vch-1', vendorCode: '30000956', action: 'ENABLED', reason: 'Onboarded — welding & fitting manpower contract PO 4203000546 (BAP)', by: 'u-suresh', byName: 'Surya Nugraha', at: '2025-07-01T02:15:00.000Z' },
+      { id: 'vch-2', vendorCode: '30000731', action: 'ENABLED', reason: 'Onboarded — project services contract PO 4203000843 (BAP)', by: 'u-suresh', byName: 'Surya Nugraha', at: '2025-09-08T03:40:00.000Z' },
+      { id: 'vch-3', vendorCode: '30000512', action: 'ENABLED', reason: 'Onboarded — catering PO 4203000502 and camp maintenance PO 4203001027', by: 'u-suresh', byName: 'Surya Nugraha', at: '2025-10-13T02:05:00.000Z' },
+      { id: 'vch-4', vendorCode: '40000143', action: 'ENABLED', reason: 'Onboarded — foreign vendor (USD), Fisher spares PO 4202000128', by: 'u-suresh', byName: 'Surya Nugraha', at: '2026-01-19T04:30:00.000Z' },
+      { id: 'vch-5', vendorCode: '30000318', action: 'ENABLED', reason: 'Onboarded — travel agent, Non-PO invoices with billing statements', by: 'u-suresh', byName: 'Surya Nugraha', at: '2026-02-02T02:50:00.000Z' },
     ],
     sapPurchaseOrders: structuredClone(SAP_POS),
     sapGrns: structuredClone(SAP_GRNS),
@@ -96,19 +100,21 @@ export function runScenarioSeed(): void {
   seedInvoices(db, SCENARIOS);
 
   // attendance batches summary
-  const batches = new Map<string, { count: number; vendor: string }>();
+  // One batch per vendor and service period, received when ESSA MIS pushed it
+  // (two days after the period closed), so the integration page and the
+  // invoices it feeds agree on the dates.
+  const batches = new Map<string, { count: number; vendor: string; pushedAt: string }>();
   db.attendanceRecords.forEach((r) => {
-    const b = batches.get(r.batchId) ?? { count: 0, vendor: r.vendorCode };
+    const b = batches.get(r.batchId) ?? { count: 0, vendor: r.vendorCode, pushedAt: r.pushedAt };
     b.count += 1;
+    if (r.pushedAt > b.pushedAt) b.pushedAt = r.pushedAt;
     batches.set(r.batchId, b);
   });
-  let bi = 0;
   batches.forEach((v, k) => {
-    bi += 1;
     db.attendanceBatches.push({
       id: k,
       source: 'ESSA-MIS',
-      receivedAt: isoAgo((2 + bi) * DAY),
+      receivedAt: v.pushedAt,
       recordCount: v.count,
       accepted: v.count,
       duplicates: 0,
@@ -117,25 +123,47 @@ export function runScenarioSeed(): void {
       correlationId: ids.correlation(),
     });
   });
+  db.attendanceBatches.sort((a, b) => b.receivedAt.localeCompare(a.receivedAt));
+  db.integrationHealth.biometricLastPushAt = db.attendanceBatches[0]?.receivedAt ?? db.integrationHealth.biometricLastPushAt;
 
   // ---- ingestion monitors ----
-  const inv = (key: number) => db.invoices[key];
+  // Every monitor row points at a seeded invoice by its real invoice number, so
+  // the Email / SharePoint monitors, the invoice list and the documents tab all
+  // tell the same story. Sender addresses are the vendors' own.
+  const byNo = (invoiceNumber: string) => {
+    const found = db.invoices.find((i) => i.invoiceNumber === invoiceNumber);
+    if (!found) throw new Error(`Seed: monitor row refers to unknown invoice ${invoiceNumber}`);
+    return found;
+  };
+  const mail = (id: string, invoiceNumber: string, sender: string, subject: string, attachments: { fileName: string; sizeKb: number }[]) => {
+    const invoice = byNo(invoiceNumber);
+    db.emailItems.push({ id, sender, subject, receivedAt: invoice.receivedAt, attachments, status: 'PROCESSED', invoiceId: invoice.id });
+  };
+  mail('em-1', '6581888', 'joycevenice.canonce@emerson.com', 'Emerson invoice 6581888 — PO 4202000128 (repair kits, Fisher)', [{ fileName: 'Invoice_6581888.pdf', sizeKb: 186 }, { fileName: 'PO_4202000128.pdf', sizeKb: 244 }, { fileName: 'GRN_5000001927.pdf', sizeKb: 122 }, { fileName: 'PIB_064581216.pdf', sizeKb: 310 }]);
+  mail('em-2', '090/BBS-INV/04/2026', 'finance@baasithu.co.id', 'Invoice 090/BBS-INV/04/2026 — Camp Maintenance Service March 2026', [{ fileName: '090_BBS-INV_04_2026.pdf', sizeKb: 402 }, { fileName: 'SES_8000003051.pdf', sizeKb: 164 }, { fileName: 'Faktur_Pajak_090.pdf', sizeKb: 148 }]);
+  mail('em-3', 'INV/TD/000591/2026', 'billing@wisatakawan.co.id', 'INV/TD/000591/2026 — Ticket domestic Batik Air ID 6295 (Tra_5840)', [{ fileName: 'INV_TD_000591_2026.pdf', sizeKb: 96 }, { fileName: 'Bill_State_010_FEBRUARI_2026.pdf', sizeKb: 1180 }]);
+  mail('em-4', '010/FEBRUARI/2026', 'billing@wisatakawan.co.id', 'Billing statement 010/FEBRUARI/2026 — PAU travel 16–28 Feb 2026', [{ fileName: 'Bill_State_010_FEBRUARI_2026.pdf', sizeKb: 1180 }, { fileName: 'Vouchers_010_FEBRUARI_2026.pdf', sizeKb: 3860 }]);
+  mail('em-5', '6604512', 'joycevenice.canonce@emerson.com', 'Emerson invoice 6604512 — PO 4202000141 (repair kits, Fisher)', [{ fileName: 'Invoice_6604512.pdf', sizeKb: 184 }, { fileName: 'PO_4202000141.pdf', sizeKb: 240 }, { fileName: 'GRN_5000002144.pdf', sizeKb: 120 }]);
+  mail('em-6', '014/JUNI/2026', 'billing@wisatakawan.co.id', 'Billing statement 014/JUNI/2026 — PAU travel 16–30 June 2026', [{ fileName: 'Bill_State_014_JUNI_2026.pdf', sizeKb: 1210 }, { fileName: 'Vouchers_014_JUNI_2026.pdf', sizeKb: 3540 }]);
+  mail('em-7', '017/JULI/2026', 'billing@wisatakawan.co.id', 'Billing statement 017/JULI/2026 — PAU travel 16–31 July 2026', [{ fileName: 'Bill_State_017_JULI_2026.pdf', sizeKb: 1195 }, { fileName: 'Vouchers_017_JULI_2026.pdf', sizeKb: 3610 }]);
+  mail('em-8', '6609230', 'joycevenice.canonce@emerson.com', 'Emerson invoice 6609230 — PO 4202000141 (sales order 9301184)', [{ fileName: 'Invoice_6609230.pdf', sizeKb: 182 }, { fileName: 'PO_4202000141.pdf', sizeKb: 240 }]);
+  mail('em-9', '018/AGUSTUS/2026', 'billing@wisatakawan.co.id', 'Billing statement 018/AGUSTUS/2026 — PAU travel 1–15 Aug 2026', [{ fileName: 'Bill_State_018_AGUSTUS_2026.pdf', sizeKb: 1174 }]);
   db.emailItems.push(
-    { id: 'em-1', sender: 'billing@nusantaraindustrialsupplies.co.id', subject: `Tax Invoice ${inv(0)?.invoiceNumber ?? ''} - July supplies`, receivedAt: isoAgo(28 * DAY), attachments: [{ fileName: 'TaxInvoice.pdf', sizeKb: 412 }, { fileName: 'GRN.pdf', sizeKb: 188 }], status: 'PROCESSED', invoiceId: inv(0)?.id },
-    { id: 'em-2', sender: 'accounts@teknoservisrekayasa.co.id', subject: 'Invoice - Rotating equipment maintenance June', receivedAt: isoAgo(26 * DAY), attachments: [{ fileName: 'ServiceInvoice.pdf', sizeKb: 356 }], status: 'PROCESSED', invoiceId: inv(1)?.id },
-    { id: 'em-3', sender: 'ap-invoices@karyatenagamandiri.co.id', subject: 'Manpower invoice July with timesheets', receivedAt: isoAgo(5 * DAY), attachments: [{ fileName: 'ManpowerInvoice.pdf', sizeKb: 298 }, { fileName: 'Timesheet.pdf', sizeKb: 1240 }, { fileName: 'AttendanceSheet.pdf', sizeKb: 920 }], status: 'PROCESSED', invoiceId: db.invoices.find((i) => i.description.includes('plant operations (July)'))?.id },
-    { id: 'em-4', sender: 'noreply@dropbox-share.com', subject: 'Your invoice is ready for download', receivedAt: isoAgo(2 * DAY), attachments: [], status: 'IGNORED', error: 'Cloud link attachments are not accepted per file security policy' },
-    { id: 'em-5', sender: 'billing@sterlingpipanusantara.co.id', subject: 'Invoice SS fasteners - August', receivedAt: isoAgo(2 * DAY), attachments: [{ fileName: 'Invoice_scan.pdf', sizeKb: 3180 }], status: 'PROCESSED', invoiceId: db.invoices.find((i) => i.description.includes('SS fasteners'))?.id },
-    { id: 'em-6', sender: 'accounts@sinartransluwuk.co.id', subject: 'Freight bills - multiple invoices combined', receivedAt: isoAgo(1 * DAY), attachments: [{ fileName: 'Combined_Bills.pdf', sizeKb: 5230 }], status: 'ERROR', error: 'PDF contains multiple invoices - rejected for resubmission (one PDF = one invoice)' },
-    { id: 'em-7', sender: 'billing@daunhijaukantin.co.id', subject: 'Canteen billing August 1st fortnight', receivedAt: isoAgo(8 * HOUR), attachments: [{ fileName: 'CateringInvoice.pdf', sizeKb: 240 }], status: 'PROCESSING' },
+    { id: 'em-10', sender: 'no-reply@wetransfer.com', subject: 'Baasithu sent you files — invoice August', receivedAt: isoAgo(2 * DAY + 3 * HOUR), attachments: [], status: 'IGNORED', error: 'Cloud link attachments are not accepted per file security policy — vendor asked to resend the PDF' },
+    { id: 'em-11', sender: 'billing@wisatakawan.co.id', subject: 'August vouchers — combined', receivedAt: isoAgo(1 * DAY + 5 * HOUR), attachments: [{ fileName: 'August_vouchers_combined.pdf', sizeKb: 5230 }], status: 'ERROR', error: 'PDF contains 6 invoices — rejected for resubmission (one PDF = one invoice)' },
+    { id: 'em-12', sender: 'finance@baasithu.co.id', subject: 'Invoice 100/BBS-INV/08/2026 — Camp Maintenance Service August 2026', receivedAt: isoAgo(2 * HOUR), attachments: [{ fileName: '100_BBS-INV_08_2026.pdf', sizeKb: 398 }, { fileName: 'SES_8000003602.pdf', sizeKb: 162 }], status: 'PROCESSING' },
   );
+  const spItem = (id: string, invoiceNumber: string, folder: string, fileName: string, sizeKb: number) => {
+    const invoice = byNo(invoiceNumber);
+    db.sharePointItems.push({ id, folder, fileName, modifiedAt: invoice.receivedAt, sizeKb, status: 'PROCESSED', invoiceId: invoice.id });
+  };
+  spItem('sp-1', '187/BBS-PI/XII/2025', '/AP-Inbox/Catering', 'Baasithu_187_BBS-PI_XII_2025_Meal_Nov2025.pdf', 640);
+  spItem('sp-2', '190/BBS-PI/I/2026', '/AP-Inbox/Catering', 'Baasithu_190_BBS-PI_I_2026_Meal_Dec2025.pdf', 648);
+  spItem('sp-3', '194/BBS-PI/II/2026', '/AP-Inbox/Catering', 'Baasithu_194_BBS-PI_II_2026_Meal_Jan2026.pdf', 652);
+  spItem('sp-4', '214/BBS-PI/VII/2026', '/AP-Inbox/Catering', 'Baasithu_214_BBS-PI_VII_2026_Meal_Jun2026.pdf', 646);
+  spItem('sp-5', '218/BBS-PI/VIII/2026', '/AP-Inbox/Catering', 'Baasithu_218_BBS-PI_VIII_2026_Meal_Jul2026.pdf', 650);
   db.sharePointItems.push(
-    { id: 'sp-1', folder: '/AP-Inbox/Material', fileName: 'HindustanElectricals_CableInvoice_Aug.pdf', modifiedAt: isoAgo(10 * DAY), sizeKb: 640, status: 'PROCESSED', invoiceId: db.invoices.find((i) => i.description.includes('LT power cable'))?.id },
-    { id: 'sp-2', folder: '/AP-Inbox/Services', fileName: 'Meridian_NDT_Unit3.pdf', modifiedAt: isoAgo(6 * DAY), sizeKb: 480, status: 'PROCESSED', invoiceId: db.invoices.find((i) => i.description.includes('NDT inspection'))?.id },
-    { id: 'sp-3', folder: '/AP-Inbox/Services', fileName: 'Apex_AnalyzerAMC_Q2.pdf', modifiedAt: isoAgo(4 * DAY), sizeKb: 520, status: 'PROCESSED', invoiceId: db.invoices.find((i) => i.description.includes('Analyzer AMC'))?.id },
-    { id: 'sp-4', folder: '/AP-Inbox/Material', fileName: 'KirloskarValves_ControlValveSpares.pdf', modifiedAt: isoAgo(1 * DAY), sizeKb: 2890, status: 'PROCESSED', invoiceId: db.invoices.find((i) => i.description.includes('Control valve spares'))?.id },
-    { id: 'sp-5', folder: '/AP-Inbox/NonPO', fileName: 'CrystalClean_DeepClean_Aug.pdf', modifiedAt: isoAgo(9 * HOUR), sizeKb: 210, status: 'PROCESSED', invoiceId: db.invoices.find((i) => i.description.includes('Deep-clean'))?.id },
-    { id: 'sp-6', folder: '/AP-Inbox/Material', fileName: 'corrupted_scan_004.pdf', modifiedAt: isoAgo(5 * HOUR), sizeKb: 90, status: 'ERROR' },
+    { id: 'sp-6', folder: '/AP-Inbox/Catering', fileName: 'scan_0004.pdf', modifiedAt: isoAgo(5 * HOUR), sizeKb: 90, status: 'ERROR' },
   );
 
   // ---- assorted access/config audit events ----
@@ -154,16 +182,15 @@ export function runScenarioSeed(): void {
       before: { 'Guest allowance': '0%' }, after: { 'Guest allowance': '5%' },
     },
     {
-      d: 14, actor: USERS[4], type: 'VENDOR_NEGATIVE_MARKED', cat: 'VENDOR', action: 'NEGATIVE_FLAG',
-      entity: 'VENDOR', id: 'V700052', ref: 'PT Sentosa Office Supplies', reason: 'Repeated billing discrepancies under investigation',
-      before: { 'Negative vendor flag': 'No', 'AP automation': 'Enabled' },
-      after: { 'Negative vendor flag': 'Yes', 'AP automation': 'Disabled' },
+      d: 14, actor: USERS[5], type: 'CONFIG_WORKFLOW_UPDATE', cat: 'CONFIGURATION', action: 'UPDATE',
+      entity: 'WORKFLOW_DEFINITION', id: 'wf-po', ref: 'PO Invoice Approval', reason: 'DoA alignment — Final Approval level for high-value PO invoices',
+      before: { 'Final Approval threshold': 'IDR 500,000,000' }, after: { 'Final Approval threshold': 'IDR 1,000,000,000' },
     },
     {
       d: 9, actor: USERS[5], type: 'CONFIG_RULE_UPDATE', cat: 'CONFIGURATION', action: 'UPDATE',
       entity: 'VALIDATION_RULE', id: 'rule-mnp-001', ref: 'Manpower N-way tolerance',
       reason: 'Tightened after the July reconciliation review',
-      before: { Tolerance: '1.0%' }, after: { Tolerance: '0.5%' },
+      before: { Tolerance: '2.0%' }, after: { Tolerance: '1.0%' },
     },
     {
       d: 7, actor: USERS[5], type: 'ROLE_ASSIGNED', cat: 'ACCESS', action: 'ASSIGN',
@@ -208,14 +235,15 @@ export function runScenarioSeed(): void {
   // across its own timeline, keeping the recorded order, so the Audit Log reads
   // consistently with the invoice dates everywhere else in the product.
   restampInvoiceHistory(db, seedStartedAt);
-  restampInvoiceAudit(db);
-  restampExceptions(db);
+  restampInvoiceAudit(db, seedStartedAt);
 
   // ---- SLA coherence -------------------------------------------------------
   // One SLA clock per invoice, resolved from the state it is actually in, so a
   // Paid or Rejected invoice never shows a breach and a breach always has a
-  // stage behind it (ESSA EAPA SLA Matrix).
+  // stage behind it (ESSA EAPA SLA Matrix). Runs before the exceptions are
+  // re-stamped so each exception carries its invoice's real due date.
   recomputeAllSla(db);
+  restampExceptions(db, seedStartedAt);
 
   techLog({ module: 'seed', event: 'SEED_COMPLETED', message: `Demo dataset seeded: ${db.invoices.length} invoices, ${db.vendors.length} vendors, ${db.exceptions.length} exceptions, ${db.validationRules.length} rules, ${db.attendanceRecords.length} attendance records` });
   markDirty();
@@ -233,7 +261,7 @@ export function runScenarioSeed(): void {
  *
  * Records keep the order the pipeline wrote them in; only the clock changes.
  */
-function restampInvoiceAudit(db: Database): void {
+function restampInvoiceAudit(db: Database, seedStartedAt: string): void {
   const firstAt = new Map<string, number>();
   const lastAt = new Map<string, number>();
   for (const ev of db.timelineEvents) {
@@ -253,17 +281,28 @@ function restampInvoiceAudit(db: Database): void {
     byInvoice.set(ev.invoiceId, list);
   }
 
+  // An audit record that has a timeline entry of the same kind takes that
+  // entry's time (extraction ↔ EXTRACTION_COMPLETED, validation ↔
+  // VALIDATION_COMPLETED, ...); anything else is laid out across the invoice's
+  // own history in the order it was written.
+  const TIMELINE_FOR_AUDIT: Record<string, string> = {
+    EXTRACTION_COMPLETED: 'EXTRACTION_COMPLETED', VALIDATION_COMPLETED: 'VALIDATION_COMPLETED', INVOICE_VALIDATED: 'VALIDATION_COMPLETED',
+    EXCEPTION_CREATED: 'EXCEPTION_CREATED', DOCUMENT_CLASSIFIED: 'DOCUMENT_CLASSIFIED', COMPLETENESS_CHECKED: 'COMPLETENESS_CHECKED',
+    APPROVAL_REQUESTED: 'APPROVAL_REQUESTED', WORKFLOW_STARTED: 'WORKFLOW_STARTED', DOWNSTREAM_HANDOFF_REQUESTED: 'WORKFLOW_COMPLETED',
+  };
   for (const [invoiceId, events] of byInvoice) {
     const invoice = db.invoices.find((i) => i.id === invoiceId);
     if (!invoice) continue;
+    const timeline = db.timelineEvents.filter((t) => t.invoiceId === invoiceId);
     const start = firstAt.get(invoiceId) ?? new Date(invoice.receivedAt).getTime();
     const end = Math.max(lastAt.get(invoiceId) ?? start, start + 5 * 60 * 1000);
     // db.auditEvents is newest-first, so walk this invoice's slice backwards to
     // lay the records out from the invoice's arrival to its latest activity.
-    const ordered = [...events].reverse();
+    const ordered = [...events].reverse().filter((ev) => ev.eventTime >= seedStartedAt);
     const step = (end - start) / Math.max(1, ordered.length - 1);
     ordered.forEach((ev, i) => {
-      ev.eventTime = new Date(start + step * i).toISOString();
+      const match = timeline.find((t) => t.event === TIMELINE_FOR_AUDIT[ev.eventType] && (!t.correlationId || t.correlationId === ev.correlationId));
+      ev.eventTime = match ? match.at : new Date(start + step * i).toISOString();
     });
   }
 
@@ -276,7 +315,7 @@ function restampInvoiceAudit(db: Database): void {
  * July appeared to have raised its exception this morning. Each exception is
  * moved onto its own invoice's clock instead.
  */
-function restampExceptions(db: Database): void {
+function restampExceptions(db: Database, seedStartedAt: string): void {
   for (const ex of db.exceptions) {
     const invoice = db.invoices.find((i) => i.id === ex.invoiceId);
     if (!invoice) continue;
@@ -286,7 +325,9 @@ function restampExceptions(db: Database): void {
     const raisedAt = events.find((at) => at > invoice.receivedAt) ?? invoice.receivedAt;
     ex.createdAt = raisedAt;
     ex.slaDueAt = invoice.slaDueAt || raisedAt;
-    ex.actions?.forEach((a) => { a.at = raisedAt; });
+    // Only the pipeline's own "created" entry carries the seeding clock; the
+    // actions the AP team took on the exception are dated by the scenario.
+    ex.actions?.forEach((a) => { if (a.at >= seedStartedAt) a.at = raisedAt; });
   }
 }
 
@@ -326,5 +367,33 @@ function restampInvoiceHistory(db: Database, seedStartedAt: string): void {
       // Never move an entry into the future.
       ev.at = new Date(Math.min(at, Date.now() - 60_000)).toISOString();
     });
+    // Approval steps the seed acted on carry the same "now" stamp. Move them
+    // onto the invoice's timeline too, so the approval SLA clock (which starts
+    // when the previous level acted) reads from the scenario's history and a
+    // scenario meant to breach its approval SLA actually does.
+    const lastAt = ordered[ordered.length - 1]?.at;
+    for (const step of db.workflowSteps) {
+      if (step.invoiceId !== invoiceId || !step.actedAt || step.actedAt < seedStartedAt) continue;
+      step.actedAt = lastAt ?? new Date(Math.min(received + 6 * HOUR_MS, Date.now() - 60_000)).toISOString();
+    }
+    // The workflow instance started when the pipeline handed over — the first
+    // approval step's clock (BPD §11.4 reminders) runs from that moment.
+    const started = ordered.find((ev) => ev.event === 'WORKFLOW_STARTED')?.at ?? lastAt;
+    for (const wf of db.workflowInstances) {
+      if (wf.invoiceId !== invoiceId || wf.startedAt < seedStartedAt) continue;
+      wf.startedAt = started ?? wf.startedAt;
+    }
+  }
+
+  // "Last updated" is the latest thing that happened on the invoice's own
+  // clock, not the moment the demo data was built.
+  for (const invoice of db.invoices) {
+    if (invoice.updatedAt < seedStartedAt) continue;
+    const stamps = [
+      ...db.timelineEvents.filter((t) => t.invoiceId === invoice.id).map((t) => t.at),
+      ...db.workflowSteps.filter((s) => s.invoiceId === invoice.id && s.actedAt).map((s) => s.actedAt as string),
+      ...db.exceptions.filter((e) => e.invoiceId === invoice.id).flatMap((e) => e.actions.map((a) => a.at)),
+    ].filter((t) => t < seedStartedAt);
+    invoice.updatedAt = stamps.length ? stamps.sort()[stamps.length - 1] : invoice.receivedAt;
   }
 }

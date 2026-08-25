@@ -249,20 +249,22 @@ miscRouter.get('/reports', authorize('REPORT_VIEW'), asyncHandler((req, res) => 
   const invoiceIds = new Set(invoices.map((i) => i.id));
 
   const exceptions = db.exceptions.filter((e) => invoiceIds.has(e.invoiceId));
+  const openByInvoice = new Map<string, number>();
+  exceptions.filter((e) => ['OPEN', 'ASSIGNED', 'IN_PROGRESS', 'WAITING'].includes(e.status)).forEach((e) => openByInvoice.set(e.invoiceId, (openByInvoice.get(e.invoiceId) ?? 0) + 1));
   const runs = db.validationRuns.filter((r) => invoiceIds.has(r.invoiceId));
   const doneSteps = db.workflowSteps.filter((s) => invoiceIds.has(s.invoiceId) && s.actedAt);
 
   const monthly: Record<string, { count: number; amount: number }> = {};
   invoices.forEach((i) => {
     const m = i.receivedAt.slice(0, 7);
-    monthly[m] = { count: (monthly[m]?.count ?? 0) + 1, amount: (monthly[m]?.amount ?? 0) + i.amount };
+    monthly[m] = { count: (monthly[m]?.count ?? 0) + 1, amount: (monthly[m]?.amount ?? 0) + (i.amountIdr ?? i.amount) };
   });
 
   const vendorPerf = new Map<string, { name: string; count: number; amount: number; exceptions: number }>();
   invoices.forEach((i) => {
     const v = vendorPerf.get(i.vendorCode) ?? { name: i.vendorName, count: 0, amount: 0, exceptions: 0 };
     v.count += 1;
-    v.amount += i.amount;
+    v.amount += i.amountIdr ?? i.amount;
     vendorPerf.set(i.vendorCode, v);
   });
   exceptions.forEach((e) => {
@@ -277,7 +279,7 @@ miscRouter.get('/reports', authorize('REPORT_VIEW'), asyncHandler((req, res) => 
   res.json({
     totals: {
       invoices: invoices.length,
-      amount: invoices.reduce((s, i) => s + i.amount, 0),
+      amount: invoices.reduce((s, i) => s + (i.amountIdr ?? i.amount), 0), // IDR equivalent (USD invoices at the NDPBM rate)
       exceptions: exceptions.length,
       exceptionRate: invoices.length ? Math.round((exceptions.length / invoices.length) * 100) : 0,
       validationRuns: runs.length,
@@ -290,9 +292,11 @@ miscRouter.get('/reports', authorize('REPORT_VIEW'), asyncHandler((req, res) => 
     },
     monthly: Object.entries(monthly).sort(([a], [b]) => a.localeCompare(b)).map(([month, v]) => ({ month, ...v })),
     byLifecycle: invoices.reduce<Record<string, number>>((acc, i) => { acc[i.lifecycle] = (acc[i.lifecycle] ?? 0) + 1; return acc; }, {}),
+    // The same status vocabulary as the Invoice Workbench (Draft / Validation / Approval Pending / Approved / Parked / Posted / Paid / Rejected).
+    byStatus: invoices.reduce<Record<string, number>>((acc, i) => { const st = currentStatus(i, openByInvoice.get(i.id) ?? 0); acc[st] = (acc[st] ?? 0) + 1; return acc; }, {}),
     byCategory: invoices.reduce<Record<string, { count: number; amount: number }>>((acc, i) => {
       const name = db.categories.find((c) => c.id === i.categoryId)?.name ?? i.categoryId;
-      acc[name] = { count: (acc[name]?.count ?? 0) + 1, amount: (acc[name]?.amount ?? 0) + i.amount };
+      acc[name] = { count: (acc[name]?.count ?? 0) + 1, amount: (acc[name]?.amount ?? 0) + (i.amountIdr ?? i.amount) };
       return acc;
     }, {}),
     exceptionsByType: exceptions.reduce<Record<string, number>>((acc, e) => { acc[e.type] = (acc[e.type] ?? 0) + 1; return acc; }, {}),
@@ -312,8 +316,8 @@ miscRouter.get('/lookups', asyncHandler((_req, res) => {
     users: db.users.map((u) => ({ id: u.id, name: u.name, title: u.title, enabled: u.enabled })),
     vendors: db.vendors.map((v) => ({ code: v.code, name: v.name })),
     activeConfigVersion: db.configVersions.find((c) => c.status === 'ACTIVE'),
-    slaRules: db.slaRules,
-    reminderRules: db.reminderRules,
+    // Administration dashboard tile: published SLA policies.
+    slaPolicies: db.slaPolicies.map((p) => ({ id: p.id, code: p.code, status: p.status, duration: p.timer.duration })),
     exceptionCodes: db.exceptionCodes,
   });
 }));

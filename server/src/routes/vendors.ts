@@ -1,12 +1,23 @@
 import { Router } from 'express';
+import { currentStatus } from '../core/status';
 import { getDb, markDirty } from '../core/store';
-import { asyncHandler, authorize, requireAuth } from '../core/http';
+import { asyncHandler, authorize, pageParams, paginate, requireAuth, sortItems } from '../core/http';
 import { Errors } from '../core/errors';
 import { audit } from '../core/audit';
 import { ids, nowIso } from '../core/ids';
 
 export const vendorRouter = Router();
 
+/**
+ * Vendor master list. Paged, sorted and filtered on the server so the page
+ * behaves like the Invoice Workbench (review, 25 Aug): the table never holds
+ * the whole master in memory, and every filter counts against the full list
+ * rather than the page on screen.
+ *
+ * The values the table shows are flattened onto each row - location, tax
+ * status and AP control state - so a column header can sort on exactly what
+ * the reader sees.
+ */
 vendorRouter.get('/vendors', authorize('VENDOR_VIEW'), asyncHandler((req, res) => {
   const db = getDb();
   let items = db.vendors.map((v) => {
@@ -17,15 +28,49 @@ vendorRouter.get('/vendors', authorize('VENDOR_VIEW'), asyncHandler((req, res) =
       control,
       invoiceCount: invoices.length,
       openInvoiceCount: invoices.filter((i) => !['POSTED', 'PAID'].includes(i.lifecycle)).length,
-      totalBilled: invoices.reduce((s, i) => s + i.amount, 0),
+      // IDR equivalent, so a USD vendor sorts and totals with the rest.
+      totalBilled: invoices.reduce((s, i) => s + (i.amountIdr ?? i.amount), 0),
+      location: [v.city, v.state].filter(Boolean).join(', '),
+      // PKP / Non-PKP is derived until SAP supplies the flag: an Indonesian
+      // vendor with an NPWP is PKP. A foreign vendor's own registration (e.g.
+      // Emerson's Singapore GST number) does not make it PKP.
+      taxStatus: v.gstin && v.country === 'Indonesia' ? 'PKP' : 'Non-PKP',
+      controlState: control?.negativeFlag ? 'Negative' : control && !control.apEnabled ? 'Disabled' : 'Enabled',
     };
   });
   const text = String(req.query.search ?? '').trim().toLowerCase();
   if (text) items = items.filter((v) => [v.code, v.name, v.city, v.gstin, v.classification].some((x) => x?.toLowerCase().includes(text)));
   if (req.query.classification) items = items.filter((v) => v.classification === req.query.classification);
+  if (req.query.taxStatus) items = items.filter((v) => v.taxStatus === req.query.taxStatus);
+  if (req.query.controlState) items = items.filter((v) => v.controlState === req.query.controlState);
+  if (req.query.sapStatus) items = items.filter((v) => v.sapStatus === req.query.sapStatus);
+  // Kept so an existing link with the old flags still opens the right list.
   if (req.query.negative === 'true') items = items.filter((v) => v.control?.negativeFlag);
   if (req.query.disabled === 'true') items = items.filter((v) => v.control && !v.control.apEnabled);
-  res.json({ items, total: items.length });
+
+  // Facets are the values actually present in the master, not the vocabulary
+  // the code knows about, so the page can hide a filter that would only ever
+  // offer one answer.
+  const all = db.vendors.map((v) => {
+    const control = db.vendorControls.find((c) => c.vendorCode === v.code);
+    return {
+      sapStatus: v.sapStatus,
+      taxStatus: v.gstin ? 'PKP' : 'Non-PKP',
+      controlState: control?.negativeFlag ? 'Negative' : control && !control.apEnabled ? 'Disabled' : 'Enabled',
+    };
+  });
+  const uniq = (values: (string | undefined)[]) => [...new Set(values)].filter(Boolean).sort() as string[];
+  const facets = {
+    sapStatuses: uniq(all.map((v) => v.sapStatus)),
+    controlStates: ['Enabled', 'Negative', 'Disabled'].filter((c) => all.some((v) => v.controlState === c)),
+    taxStatuses: ['PKP', 'Non-PKP'].filter((t) => all.some((v) => v.taxStatus === t)),
+  };
+
+  // No default sort: unsorted is the SAP master's own order (by vendor code),
+  // which is what a cleared column header returns to.
+  const p = pageParams(req);
+  items = sortItems(items, p.sortBy, p.sortDir);
+  res.json({ ...paginate(items, p), facets });
 }));
 
 vendorRouter.get('/vendors/:code', authorize('VENDOR_VIEW'), asyncHandler((req, res) => {
@@ -44,6 +89,8 @@ vendorRouter.get('/vendors/:code', authorize('VENDOR_VIEW'), asyncHandler((req, 
       .map((i) => ({
         id: i.id, invoiceNumber: i.invoiceNumber, invoiceDate: i.invoiceDate, amount: i.amount,
         currency: i.currency, lifecycle: i.lifecycle, stage: i.stage,
+        // The same status the Invoice Workbench shows, so a vendor page never disagrees with it.
+        status: currentStatus(i, db.exceptions.filter((e) => e.invoiceId === i.id && ['OPEN', 'ASSIGNED', 'IN_PROGRESS', 'WAITING'].includes(e.status)).length),
         categoryName: db.categories.find((c) => c.id === i.categoryId)?.name,
       })),
   });

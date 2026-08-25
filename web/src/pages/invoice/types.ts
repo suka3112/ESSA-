@@ -11,7 +11,7 @@ export interface InvoiceDetail {
   };
   vendor?: { code: string; name: string; city: string; gstin: string; paymentTerms: string; sapStatus: string };
   vendorControl?: { negativeFlag: boolean; apEnabled: boolean; reason?: string };
-  lines: { id: string; lineNo: number; description: string; quantity: number; uom: string; unitPrice: number; amount: number; poItem?: string }[];
+  lines: { id: string; lineNo: number; description: string; quantity: number; uom: string; unitPrice: number; amount: number; poItem?: string; taxCode?: string }[];
   documents: DocumentRow[];
   completeness: CompletenessRow[];
   extractionRuns: { id: string; documentId: string; documentTypeId: string; profileVersion: string; promptVersion: string; modelDeployment: string; status: string; startedAt: string; durationMs?: number; tokensIn?: number; tokensOut?: number; fieldCount: number; lowConfidenceCount: number }[];

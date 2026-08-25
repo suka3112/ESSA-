@@ -12,7 +12,7 @@ const STEPS = [
   { label: 'Extract', detail: 'Azure GPT reads the document fields' },
   { label: 'Normalize', detail: 'Dates → ISO, amounts → decimal, codes → uppercase' },
   { label: 'Map', detail: 'Configured SAP field (Admin → SAP Field Mapping)' },
-  { label: 'Compare', detail: 'Against SAP reference data per match type + tolerance' },
+  { label: 'Compare', detail: 'Against SAP reference data per match type, tolerance' },
   { label: 'Result', detail: 'Matched / Mismatch / Awaiting SAP confirmation' },
 ];
 

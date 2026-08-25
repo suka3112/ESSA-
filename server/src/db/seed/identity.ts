@@ -120,11 +120,14 @@ const band = (bandNo: number, minAmount: number, maxAmount: number | null, roles
     active: true,
   }));
 
+// Band boundaries never repeat: each band starts 1 above the previous band's
+// upper limit, so any invoice amount falls in exactly one band and can never
+// trigger two different approval workflows (matching is inclusive on both ends).
 export const DOA_MATRIX: DoAEntry[] = [
   ...band(1, 0, 2_000_000, ['HOS']),
-  ...band(2, 2_000_000, 5_000_000, ['HOS', 'HOD']),
-  ...band(3, 5_000_000, 15_000_000, ['HOD', 'HOF']),
-  ...band(4, 15_000_000, 50_000_000, ['HOD', 'HOF', 'OSH_STH']),
-  ...band(5, 50_000_000, 100_000_000, ['HOD', 'HOF', 'OSH_STH', 'GFD']),
-  ...band(6, 100_000_000, null, ['HOD', 'HOF', 'OSH_STH', 'GFD']),
+  ...band(2, 2_000_001, 5_000_000, ['HOS', 'HOD']),
+  ...band(3, 5_000_001, 15_000_000, ['HOD', 'HOF']),
+  ...band(4, 15_000_001, 50_000_000, ['HOD', 'HOF', 'OSH_STH']),
+  ...band(5, 50_000_001, 100_000_000, ['HOD', 'HOF', 'OSH_STH', 'GFD']),
+  ...band(6, 100_000_001, null, ['HOD', 'HOF', 'OSH_STH', 'GFD']),
 ];

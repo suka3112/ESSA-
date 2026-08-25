@@ -44,7 +44,9 @@ const NAV: NavItem[] = [
     label: 'Administration', to: '/admin/configuration', icon: <Settings size={16} />, perm: 'CONFIG_VIEW',
     children: [
       { label: 'Invoice Configuration', to: '/admin/configuration', perm: 'CONFIG_VIEW' },
-      { label: 'SLA & Reminders', to: '/admin/sla', perm: 'CONFIG_VIEW' },
+      { label: 'SLA Management', to: '/admin/sla', perm: 'CONFIG_VIEW' },
+      // Reference data, not an SLA setting — its own item (review, 25 Aug).
+      { label: 'Exception Codes', to: '/admin/exception-codes', perm: 'CONFIG_VIEW' },
       { label: 'Workflows & Approval Hierarchy', to: '/admin/workflows', perm: 'CONFIG_VIEW' },
       { label: 'Users & Roles', to: '/admin/users', perm: 'USER_ADMIN' },
     ],
@@ -127,7 +129,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <EapaLogo />
       <nav aria-label="Main navigation" className="flex-1 overflow-y-auto px-2 pb-4 scrollbar-thin">
         {visibleNav.map((item) => {
-          const activeParent = item.children?.some((c) => location.pathname === c.to) || location.pathname === item.to;
+          const activeParent = item.children?.some((c) => location.pathname === c.to || location.pathname.startsWith(`${c.to}/`)) || location.pathname === item.to;
           return (
             <div key={item.label} className="mb-0.5">
               <NavLink
@@ -149,7 +151,9 @@ export function AppShell({ children }: { children: ReactNode }) {
                     <NavLink
                       key={c.to}
                       to={c.to}
-                      end
+                      // SLA Management has its own sub-screens (/admin/sla/…);
+                      // every other admin entry is a single page.
+                      end={c.to !== '/admin/sla'}
                       className={({ isActive }) =>
                         clsx(
                           'block rounded px-2 py-1.5 text-xs font-medium',

@@ -251,14 +251,17 @@ export function Tabs({
   active,
   onChange,
   counts,
+  actions,
 }: {
   tabs: { key: string; label: string }[];
   active: string;
   onChange: (key: string) => void;
   counts?: Record<string, number | undefined>;
+  /** Sits at the right end of the tab row — e.g. the invoice's current status. */
+  actions?: ReactNode;
 }) {
-  return (
-    <ScrollTabs className="border-b border-line">
+  const tabRow = (
+    <ScrollTabs className={clsx('border-b border-line', actions && 'flex-1')}>
       <div role="tablist" className="flex flex-nowrap gap-0.5">
       {tabs.map((t) => (
         <button
@@ -283,6 +286,14 @@ export function Tabs({
       ))}
       </div>
     </ScrollTabs>
+  );
+
+  if (!actions) return tabRow;
+  return (
+    <div className="flex items-end gap-3">
+      {tabRow}
+      <div className="flex shrink-0 items-center gap-2 self-stretch border-b border-line pb-2 pt-2">{actions}</div>
+    </div>
   );
 }
 

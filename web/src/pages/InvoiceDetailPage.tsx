@@ -236,6 +236,10 @@ export default function InvoiceDetailPage() {
               counts={{ extract: failedChecks, approvals: activeSteps }}
               active={tab === 'approvals' && inv.poNumber ? 'extract' : tab}
               onChange={setTab}
+              /* Where the invoice stands, at the right of the tab row, so it is
+                 visible on every tab without a strip repeating it above the
+                 content (review, 25 Aug). */
+              actions={<InvoiceStatusBadge status={currentStatus(state)} />}
             />
             <div className="mt-3">
               {tab === 'extract' && (

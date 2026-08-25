@@ -207,22 +207,6 @@ export function ExtractValidateTab({
 
   return (
     <div className="space-y-4">
-      {/* Checklist row 64: the invoice's current state is repeated at the top of
-          this tab, so the AP team can see where the invoice stands without
-          scrolling back to the page header. */}
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-xs text-ink-secondary">
-          <span className="font-semibold text-ink">Extract &amp; validate</span>
-          <span className="ml-2 text-ink-muted">Review AI-extracted fields and validation results for this invoice</span>
-        </p>
-        <p className="flex flex-wrap items-center gap-1.5 text-2xs text-ink-muted">
-          <span className="uppercase tracking-wide">Current</span>
-          <InvoiceStatusBadge status={currentStatus(inv)} />
-          {statusDetail(inv) && <span className="text-ink-muted">· {statusDetail(inv)}</span>}
-          <span className="ml-1 uppercase tracking-wide">Next</span>
-          <InvoiceStatusBadge status={nextStatus(inv)} muted />
-        </p>
-      </div>
 
       {/* ============================================================ EXTRACTION */}
       <section className="rounded-lg border border-line bg-white shadow-card">

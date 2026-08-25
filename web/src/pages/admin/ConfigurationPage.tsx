@@ -436,9 +436,6 @@ function CategoryTree({
       </div>
       {group('PO', poCats)}
       {group('Non-PO', nonPoCats)}
-      <p className="rounded-md bg-canvas px-2 py-1.5 text-2xs text-ink-muted">
-        Fixed invoice-type set (client master). New types need an SAP change request — here they can only be enabled or disabled.
-      </p>
     </aside>
   );
 }
@@ -510,7 +507,7 @@ function CategoryEditor(p: TabProps) {
           />
         </dl>
 
-        {/* Enable/Disable only — the invoice-type set is fixed (SAP change request). */}
+        {/* Enable/Disable only — the invoice-type set is fixed. */}
         <button
           disabled={!mayEdit}
           onClick={() => setToggleOpen(true)}

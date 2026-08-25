@@ -93,10 +93,8 @@ export default function LoginPage() {
     <div className="flex min-h-screen items-center justify-center bg-canvas p-4">
       <div className="w-full max-w-md rounded-xl border border-line bg-white p-8 shadow-pop">
         <div className="text-center">
-          <p className="text-2xl font-black tracking-tight text-essa-700">
-            eapa<span className="align-super text-xs text-essa-400">●</span>
-          </p>
-          <p className="mt-0.5 text-2xs font-semibold uppercase tracking-widest text-ink-muted">ESSA Accounts Payable Automation</p>
+          <img src="/essa-logo.png" alt="ESSA" className="mx-auto h-9 w-auto" />
+          <p className="mt-1.5 text-2xs font-semibold uppercase tracking-widest text-ink-muted">EAPA (Accounts Payable Automation)</p>
         </div>
 
         {error && (

@@ -73,9 +73,6 @@ export default function ExceptionCodesPage() {
           <span className="ml-auto self-center text-2xs text-ink-muted">{rows.length} of {codes.length} codes</span>
         </div>
         <DataTable columns={columns} rows={rows} rowKey={(r) => r.id} dense empty={<p className="py-8 text-center text-xs text-ink-muted">No exception code matches.</p>} />
-        <p className="border-t border-line-soft px-3 py-2 text-2xs text-ink-muted">
-          The catalogue is fixed with the platform release so that a code always means the same thing on the workbench, in reports and in vendor correspondence. It is not edited in the portal by any user.
-        </p>
       </Card>
     </div>
   );

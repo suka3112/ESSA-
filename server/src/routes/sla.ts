@@ -193,8 +193,10 @@ slaRouter.post('/sla/policies/:id', authorize('CONFIG_EDIT'), asyncHandler((req,
   const idx = db.slaPolicies.findIndex((p) => p.id === req.params.id);
   if (idx < 0) throw Errors.notFound('SLA policy', req.params.id);
   const current = db.slaPolicies[idx];
-  if (current.status === 'ACTIVE' || current.status === 'RETIRED') {
-    throw Errors.conflict(`Version ${current.version} is ${current.status.toLowerCase()} and cannot be edited — create a new version instead`);
+  // Versioning removed from the product UI (review, 25 Aug): an active policy
+  // is edited in place and stays active. Only retired policies are locked.
+  if (current.status === 'RETIRED') {
+    throw Errors.conflict('This policy is retired and cannot be edited');
   }
   const body = stripIncoming(req.body as Partial<SlaPolicy>);
   const codeLocked = db.slaPolicies.some((p) => p.code === current.code && p.id !== current.id);
@@ -202,8 +204,10 @@ slaRouter.post('/sla/policies/:id', authorize('CONFIG_EDIT'), asyncHandler((req,
   if (code !== current.code && db.slaPolicies.some((p) => p.code === code)) throw Errors.conflict(`SLA code ${code} already exists`);
   const updated: SlaPolicy = {
     ...current, ...body, code, id: current.id, version: current.version,
-    // Any edit invalidates the previous test run.
-    status: 'DRAFT', lastTestedAt: undefined,
+    // An active policy stays active when edited in place; a draft edit
+    // invalidates the previous test run.
+    status: current.status === 'ACTIVE' ? 'ACTIVE' : 'DRAFT',
+    lastTestedAt: current.status === 'ACTIVE' ? current.lastTestedAt : undefined,
     changedBy: user.name, changedAt: nowIso(),
   };
   const problems = validatePolicy(db, updated);
@@ -327,14 +331,15 @@ slaRouter.post('/sla/policies/:id/retire', authorize('CONFIG_PUBLISH'), asyncHan
   res.json({ policy: p });
 }));
 
-/** Discard a draft that was never published. */
+/** Delete a policy. Versioning removed (review, 25 Aug): any policy can be
+ * deleted; running SLA clocks are recomputed and keep their history. */
 slaRouter.post('/sla/policies/:id/delete', authorize('CONFIG_EDIT'), asyncHandler((req, res) => {
   const db = getDb();
   const idx = db.slaPolicies.findIndex((x) => x.id === req.params.id);
   if (idx < 0) throw Errors.notFound('SLA policy', req.params.id);
   const p = db.slaPolicies[idx];
-  if (p.status === 'ACTIVE' || p.status === 'RETIRED') throw Errors.conflict('Published versions are immutable and cannot be deleted — retire the policy instead');
   db.slaPolicies.splice(idx, 1);
+  recomputeAllSla(db);
   markDirty();
   logPolicy(req, 'DELETE', p);
   res.json({ ok: true });

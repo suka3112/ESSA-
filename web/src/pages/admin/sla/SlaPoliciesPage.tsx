@@ -1,10 +1,10 @@
 /**
  * Screen 1 — SLA Management list.
  *
- * One row per SLA code, showing the version that is in force (or the latest
- * draft when nothing is published). Search, scope / stage / status filters,
- * Create SLA, View, Edit (opens the draft, or offers a new version when the
- * policy is active), Clone and History.
+ * One row per SLA code. Versioning was removed from the UI (review, 25 Aug):
+ * the user sees and edits a single policy — no version chips, no version
+ * history. Search, scope / stage / status filters, Create SLA, View, Edit
+ * and Clone.
  *
  * This screen never starts or stops a clock — it only manages the
  * configuration used when a qualifying event occurs.
@@ -12,11 +12,11 @@
 import { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Copy, Eye, GitBranch, History, Pencil, Plus, RotateCcw, Search } from 'lucide-react';
+import { Pencil, Plus, RotateCcw, Search, Trash2 } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { fmtDate } from '@/lib/format';
-import { Badge, Button, Card, DataTable, Field, Input, LoadingState, Modal, PageHeader, Select, Tooltip, useToast, type Column } from '@/components/ui';
+import { Button, Card, ConfirmDialog, DataTable, Input, LoadingState, PageHeader, Select, useToast, type Column } from '@/components/ui';
 import {
   FilterField, PolicyStatusBadge, ProposedNote, SLA_BREADCRUMB, SlaSectionNav, label, scopeLabel, targetLabel,
   useSlaMeta, useSlaPolicies, type SlaPolicy,
@@ -37,8 +37,7 @@ export default function SlaPoliciesPage() {
   const [scope, setScope] = useState('');
   const [stage, setStage] = useState('');
   const [status, setStatus] = useState('');
-  const [cloning, setCloning] = useState<{ source: SlaPolicy; code: string; name: string } | null>(null);
-  const [history, setHistory] = useState<ListRow | null>(null);
+  const [deleting, setDeleting] = useState<ListRow | null>(null);
 
   const rows = useMemo<ListRow[]>(() => {
     const byCode = new Map<string, SlaPolicy[]>();
@@ -63,25 +62,14 @@ export default function SlaPoliciesPage() {
     return true;
   });
 
-  const clone = useMutation({
-    mutationFn: (p: { id: string; code: string; name: string }) => api.post<{ policy: SlaPolicy }>(`/sla/policies/${p.id}/clone`, { code: p.code, name: p.name }),
-    onSuccess: (r) => {
-      toast.push({ tone: 'success', title: 'Policy cloned', detail: `${r.policy.code} created as a draft.` });
+  const del = useMutation({
+    mutationFn: (r: ListRow) => Promise.all(r.versions.map((v) => api.post(`/sla/policies/${v.id}/delete`, {}))),
+    onSuccess: (_d, r) => {
+      toast.push({ tone: 'success', title: 'SLA policy deleted', detail: `${r.policy.code} removed. Existing runtime clocks keep their history.` });
       qc.invalidateQueries({ queryKey: ['sla-policies'] });
-      setCloning(null);
-      navigate(`/admin/sla/policies/${r.policy.id}`);
+      setDeleting(null);
     },
-    onError: (e) => toast.push({ tone: 'error', title: 'Clone failed', detail: e instanceof ApiError ? e.body.message : String(e) }),
-  });
-
-  const newVersion = useMutation({
-    mutationFn: (id: string) => api.post<{ policy: SlaPolicy }>(`/sla/policies/${id}/new-version`, {}),
-    onSuccess: (r) => {
-      toast.push({ tone: 'success', title: `Draft v${r.policy.version} created`, detail: 'The active version stays in force until this draft is published.' });
-      qc.invalidateQueries({ queryKey: ['sla-policies'] });
-      navigate(`/admin/sla/policies/${r.policy.id}`);
-    },
-    onError: (e) => toast.push({ tone: 'error', title: 'Could not create a new version', detail: e instanceof ApiError ? e.body.message : String(e) }),
+    onError: (e) => toast.push({ tone: 'error', title: 'Delete failed', detail: e instanceof ApiError ? e.body.message : String(e) }),
   });
 
   if (isLoading || !data || !meta.data) return <LoadingState />;
@@ -105,16 +93,6 @@ export default function SlaPoliciesPage() {
       render: (r) => (
         <span className="inline-flex flex-wrap items-center gap-1 whitespace-nowrap text-xs">
           {r.policy.timer.duration == null ? <span className="text-2xs text-ink-faint">Not applicable</span> : <span className="font-medium">{targetLabel(r.policy)}</span>}
-          {r.policy.provisional && (
-            <Tooltip text={r.policy.provisionalNote ?? 'Value still to be confirmed by ESSA.'}>
-              <Badge tone="warning">TBC</Badge>
-            </Tooltip>
-          )}
-          {r.policy.timer.duration != null && !r.policy.timer.unitConfirmed && (
-            <Tooltip text="The BPD does not state whether SLA values are calendar or business days. Confirm the unit with ESSA before production use.">
-              <span className="whitespace-nowrap text-2xs text-amber-700">unit TBC</span>
-            </Tooltip>
-          )}
         </span>
       ),
     },
@@ -124,34 +102,18 @@ export default function SlaPoliciesPage() {
     },
     {
       key: 'status', header: 'Status', sortable: true, value: (r) => r.policy.status,
-      render: (r) => (
-        <span className="inline-flex items-center gap-1 whitespace-nowrap">
-          <PolicyStatusBadge status={r.policy.status} />
-          <span className="text-2xs text-ink-muted">v{r.policy.version}</span>
-          {r.live && r.draft && (
-            <Tooltip text={`A draft v${r.draft.version} is being prepared while v${r.live.version} stays in force.`}>
-              <Badge tone="draft">Draft v{r.draft.version}</Badge>
-            </Tooltip>
-          )}
-        </span>
-      ),
+      render: (r) => <PolicyStatusBadge status={r.policy.status} />,
     },
     {
       key: 'actions', header: 'Actions', align: 'center', sticky: true,
       render: (r) => (
         <div className="flex justify-center gap-0.5">
-          <Button size="sm" variant="ghost" aria-label={`View ${r.policy.code}`} title="View" onClick={() => navigate(`/admin/sla/policies/${r.policy.id}`)}><Eye size={13} /></Button>
           {canEdit && (
-            r.draft ? (
-              <Button size="sm" variant="ghost" aria-label={`Edit draft of ${r.policy.code}`} title={`Edit draft v${r.draft.version}`} onClick={() => navigate(`/admin/sla/policies/${r.draft!.id}`)}><Pencil size={13} /></Button>
-            ) : (
-              <Button size="sm" variant="ghost" aria-label={`Create a new version of ${r.policy.code}`} title="Create a new draft version (the active version is never edited in place)" loading={newVersion.isPending && newVersion.variables === r.policy.id} onClick={() => newVersion.mutate(r.policy.id)}><GitBranch size={13} /></Button>
-            )
+            <Button size="sm" variant="ghost" aria-label={`Edit ${r.policy.code}`} title="Edit" onClick={() => navigate(`/admin/sla/policies/${(r.draft ?? r.policy).id}`)}><Pencil size={13} /></Button>
           )}
           {canEdit && (
-            <Button size="sm" variant="ghost" aria-label={`Clone ${r.policy.code}`} title="Clone into a new policy" onClick={() => setCloning({ source: r.policy, code: `${r.policy.code}_COPY`, name: `${r.policy.name} (copy)` })}><Copy size={13} /></Button>
+            <Button size="sm" variant="ghost" aria-label={`Delete ${r.policy.code}`} title="Delete" className="text-semantic-error" onClick={() => setDeleting(r)}><Trash2 size={13} /></Button>
           )}
-          <Button size="sm" variant="ghost" aria-label={`Version history of ${r.policy.code}`} title="Version history" onClick={() => setHistory(r)}><History size={13} /></Button>
         </div>
       ),
     },
@@ -206,7 +168,7 @@ export default function SlaPoliciesPage() {
         </form>
         <DataTable columns={columns} rows={filtered} rowKey={(r) => r.policy.code} dense empty={<p className="py-8 text-center text-xs text-ink-muted">No SLA policies match these filters.</p>} />
         <div className="border-t border-line-soft px-3 py-2 text-2xs text-ink-muted">
-          Showing {filtered.length} of {rows.length} policies · Targets marked <span className="font-semibold text-amber-700">TBC</span> are still to be confirmed in the BPD (Tax Team SLA) and stay in Draft until confirmed.
+          Showing {filtered.length} of {rows.length} policies
         </div>
       </Card>
 
@@ -214,55 +176,17 @@ export default function SlaPoliciesPage() {
         <span className="font-semibold">Runtime effect.</span> When the configured trigger event occurs, EAPA resolves the active policy for the invoice's category and stage and creates one runtime SLA instance for it. See <Link to="/admin/sla/monitor" className="text-essa-700 hover:underline">SLA Instances / Monitor</Link> for the clocks running right now.
       </ProposedNote>
 
-      {/* ------------------------------------------------------------ clone */}
-      <Modal
-        open={Boolean(cloning)}
-        onClose={() => setCloning(null)}
-        title={`Clone ${cloning?.source.code ?? ''}`}
-        footer={
-          <>
-            <Button variant="ghost" onClick={() => setCloning(null)}>Cancel</Button>
-            <Button loading={clone.isPending} disabled={!cloning?.code.trim() || !cloning?.name.trim()} onClick={() => cloning && clone.mutate({ id: cloning.source.id, code: cloning.code.trim().toUpperCase(), name: cloning.name.trim() })}>Create draft</Button>
-          </>
-        }
-      >
-        {cloning && (
-          <div className="space-y-3">
-            <p className="text-xs text-ink-secondary">Copies the timer, reminders, escalation and pause rules of <span className="font-mono">{cloning.source.code}</span> v{cloning.source.version} into a new Draft policy. Change the scope on the General tab afterwards.</p>
-            <Field label="New SLA Code" required hint="Upper-case letters, digits and underscores. Immutable after first publish.">
-              <Input value={cloning.code} onChange={(e) => setCloning((c) => c && { ...c, code: e.target.value.toUpperCase() })} className="w-full font-mono" maxLength={50} />
-            </Field>
-            <Field label="New SLA Name" required>
-              <Input value={cloning.name} onChange={(e) => setCloning((c) => c && { ...c, name: e.target.value })} className="w-full" maxLength={120} />
-            </Field>
-          </div>
-        )}
-      </Modal>
-
-      {/* ---------------------------------------------------------- history */}
-      <Modal open={Boolean(history)} onClose={() => setHistory(null)} title={`Version history — ${history?.policy.code ?? ''}`} wide>
-        {history && (
-          <table className="w-full text-left text-xs">
-            <thead>
-              <tr className="border-b border-line text-2xs uppercase tracking-wide text-ink-muted">
-                <th className="py-1.5 pr-3">Version</th><th className="py-1.5 pr-3">Status</th><th className="py-1.5 pr-3">Effective From</th><th className="py-1.5 pr-3">Changed By</th><th className="py-1.5 pr-3">Change Summary</th><th className="py-1.5"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {history.versions.map((v) => (
-                <tr key={v.id} className="border-b border-line-soft">
-                  <td className="py-1.5 pr-3 font-semibold">v{v.version}</td>
-                  <td className="py-1.5 pr-3"><PolicyStatusBadge status={v.status} /></td>
-                  <td className="py-1.5 pr-3 whitespace-nowrap">{fmtDate(v.effectiveFrom)}</td>
-                  <td className="py-1.5 pr-3">{v.publishedBy ?? v.changedBy}</td>
-                  <td className="py-1.5 pr-3 text-ink-secondary">{v.changeSummary || '—'}</td>
-                  <td className="py-1.5 text-right"><Link to={`/admin/sla/policies/${v.id}?tab=versions`} className="text-essa-700 hover:underline">Open</Link></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </Modal>
+      {/* ----------------------------------------------------------- delete */}
+      <ConfirmDialog
+        open={Boolean(deleting)}
+        onClose={() => setDeleting(null)}
+        onConfirm={() => deleting && del.mutate(deleting)}
+        loading={del.isPending}
+        tone="danger"
+        title={`Delete ${deleting?.policy.code ?? ''}`}
+        confirmLabel="Delete policy"
+        message={<p className="text-xs">The SLA policy <span className="font-mono font-semibold">{deleting?.policy.code}</span> is removed and no new SLA clocks will be created from it. Existing runtime clocks keep their history. This action is recorded in the Audit Log.</p>}
+      />
     </div>
   );
 }

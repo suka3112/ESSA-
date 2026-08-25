@@ -260,13 +260,6 @@ export default function WorkflowsPage() {
           rows={hierarchy}
           rowKey={(r) => r.key}
         />
-        <div className="flex flex-wrap items-center gap-3 border-t border-line bg-line-soft/40 px-4 py-2 text-2xs text-ink-muted">
-          <span>Bands must cover <span className="font-semibold text-ink">0 → ∞</span> with no gaps.</span>
-          <span className="text-line-strong">·</span>
-          <span>
-            <span className="font-semibold text-semantic-warning">[TO BE CONFIRMED]</span> Named approvers per department — pending complete DoA matrix from ESSA (BPD §11.2).
-          </span>
-        </div>
       </Card>
 
       {/* --------------------------------------------- workflow definitions */}
@@ -276,7 +269,6 @@ export default function WorkflowsPage() {
           title={<span>{wf.name} <span className="ml-2 text-2xs font-normal text-ink-muted">{wf.categoryId ? lookups?.categories.find((c) => c.id === wf.categoryId)?.name : 'All Non-PO categories'}</span></span>}
           actions={<StatusBadge value={wf.status} />}
         >
-          <p className="mb-3 text-xs text-ink-muted">{wf.description}</p>
           <div className="space-y-4">
             {hierarchy.map((band, bi) => {
               // Expand the workflow for this band: the "By approval hierarchy"
@@ -328,9 +320,6 @@ export default function WorkflowsPage() {
               );
             })}
           </div>
-          <p className="mt-2 text-2xs text-ink-muted">
-            Each band shows the exact approval chain an invoice of that amount follows. A level runs only when the invoice meets its conditions (e.g. tax review only for service invoices); levels that do not apply are skipped. This workflow is defined by the BPD and is read-only.
-          </p>
         </Card>
       ))}
 
@@ -355,9 +344,6 @@ export default function WorkflowsPage() {
             rows={REMINDER_SCHEDULE}
             rowKey={(r) => String(r.n)}
           />
-          <p className="border-t border-line bg-line-soft/40 px-4 py-2 text-2xs text-ink-muted">
-            Initial approval request is sent via <span className="font-semibold text-ink">Teams card + Email</span> simultaneously; the first action on either resolves the approval.
-          </p>
         </Card>
 
         <Card
@@ -371,14 +357,10 @@ export default function WorkflowsPage() {
               { key: 'trigger', header: 'Trigger', render: (r) => <span>{r.trigger}</span> },
               { key: 'action', header: 'Action', render: (r) => <span className="font-medium">{r.action}</span> },
               { key: 'target', header: 'Target', render: (r) => <span>{r.target}</span> },
-              { key: 'channel', header: 'Channel', render: (r) => <ChannelTag value={r.channel} /> },
             ] satisfies Column<typeof ESCALATION_LADDER[number]>[]}
             rows={ESCALATION_LADDER}
             rowKey={(r) => String(r.n)}
           />
-          <p className="border-t border-line bg-line-soft/40 px-4 py-2 text-2xs text-ink-muted">
-            Escalation preserves the original approver — either the escalated recipient or the original approver can resolve the request.
-          </p>
         </Card>
       </div>
 
@@ -402,9 +384,6 @@ export default function WorkflowsPage() {
           rows={VENDOR_CHASE}
           rowKey={(r) => String(r.n)}
         />
-        <p className="border-t border-line bg-line-soft/40 px-4 py-2 text-2xs text-ink-muted">
-          All intervals in this module are configurable by the Administrator — <span className="font-semibold text-ink">no code changes required</span> (BPD §11.4).
-        </p>
       </Card>
 
       {/* ------------------------------------------------ amount-range editor */}

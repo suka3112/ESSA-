@@ -8,7 +8,7 @@
  */
 import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { Badge, Card, DataTable, LoadingState, PageHeader, Tooltip, type Column } from '@/components/ui';
+import { Badge, Card, DataTable, LoadingState, PageHeader, type Column } from '@/components/ui';
 import { PolicyStatusBadge, ProposedNote, SLA_BREADCRUMB, SlaSectionNav, durationLabel, label, scopeLabel, useSlaMeta, useSlaPolicies, type SlaPolicy, type SlaReminderRule } from './shared';
 
 /** One row per SLA code: the version in force, else the latest draft. */
@@ -45,7 +45,7 @@ export function ReminderRulesPage() {
     <div className="space-y-3">
       <PageHeader breadcrumb={[...SLA_BREADCRUMB, { label: 'Reminder Rules' }]} title="Reminder Rules" description="Every reminder the scheduler will send while an SLA is open, across all policies. Edit a rule from its policy's Reminder Rules tab." />
       <SlaSectionNav active="reminders" />
-      <ProposedNote tone="info"><span className="font-semibold">BPD §11.4 — confirmed.</span> Approval reminders at 24h, 48h, 3 days and 5 days; missing-document follow-up every 7 days. Intervals are configurable here without a code change.</ProposedNote>
+      <ProposedNote tone="info">Approval reminders at 24h, 48h, 3 days and 5 days; missing-document follow-up every 7 days. Intervals are configurable here without a code change.</ProposedNote>
       <Card pad={false}>
         <DataTable columns={columns} rows={rows} rowKey={(r) => `${r.policy.id}-${r.rule.id}`} dense empty={<p className="py-8 text-center text-xs text-ink-muted">No reminder rules configured.</p>} />
       </Card>
@@ -75,7 +75,7 @@ export function EscalationRulesPage() {
       <PageHeader breadcrumb={[...SLA_BREADCRUMB, { label: 'Escalation Rules' }]} title="Escalation Rules" description="What EAPA does when an SLA threshold is breached or a reminder sequence is exhausted. Edit a rule from its policy's Escalation Rules tab." />
       <SlaSectionNav active="escalations" />
       <ProposedNote tone="info">
-        <span className="font-semibold">BPD §11.4 — confirmed.</span> Approval escalates to the next approval level after the final reminder, and to the <Tooltip text="BPD: AP Manager"><span className="underline decoration-dotted">AP Supervisor</span></Tooltip> when no higher level exists; missing-document chase escalates to the Head of Function after the first unanswered reminder. Escalation is never an automatic approval.
+        Approval escalates to the next approval level after the final reminder, and to the AP Supervisor when no higher level exists; missing-document chase escalates to the Head of Function after the first unanswered reminder. Escalation is never an automatic approval.
       </ProposedNote>
       <Card pad={false}>
         <DataTable columns={columns} rows={rows} rowKey={(p) => p.id} dense empty={<p className="py-8 text-center text-xs text-ink-muted">No escalation rules configured.</p>} />

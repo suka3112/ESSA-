@@ -61,15 +61,12 @@ const NAV: NavItem[] = [
 
 interface DirectoryUser { id: string; name: string; email: string; title: string; enabled: boolean; roles: string[] }
 
-/** Approved branding: EAPA — ESSA Accounts Payable Automation. */
+/** Approved branding: ESSA logo with the EAPA product tag beneath it. */
 function EapaLogo() {
   return (
     <div className="px-4 py-3.5">
-      <span className="text-2xl font-black tracking-tight text-essa-600" style={{ fontFamily: 'Inter' }}>
-        eapa
-        <span className="align-super text-xs text-essa-400">●</span>
-      </span>
-      <span className="block text-2xs font-semibold uppercase tracking-widest text-ink-muted">ESSA Accounts Payable Automation</span>
+      <img src="/essa-logo.png" alt="ESSA" className="h-8 w-auto" />
+      <span className="mt-1 block text-2xs font-semibold uppercase tracking-widest text-ink-muted">EAPA (Accounts Payable Automation)</span>
     </div>
   );
 }

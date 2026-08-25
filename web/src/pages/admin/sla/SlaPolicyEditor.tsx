@@ -1,28 +1,27 @@
 /**
  * Screens 2–6, 8 and 9 — Create / Edit SLA policy.
  *
- * One policy version, edited across tabs:
+ * One policy, edited across tabs:
  *   General · Timer & Calendar · Reminder Rules · Escalation Rules ·
- *   Pause / Stop-Clock (proposed) · Test / Simulation · Versions
+ *   Pause / Stop-Clock (proposed) · Test / Simulation
  *
- * Lifecycle (spec Screen 9): Draft → Test → Active → Retired. A published
- * version is immutable: the screen becomes read-only and offers "Create new
- * version" instead of editing in place. Every action is recorded in the
- * Audit Log as SLA_POLICY_*.
+ * Versioning removed from the UI (review, 25 Aug): the user sees and edits a
+ * single policy — no Versions tab, no version numbers, no "create new
+ * version". Every action is recorded in the Audit Log as SLA_POLICY_*.
  */
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, FlaskConical, GitBranch, Plus, Save, Send, Trash2, XCircle } from 'lucide-react';
+import { ArrowLeft, FlaskConical, Plus, Save, Send, Trash2, XCircle } from 'lucide-react';
 import clsx from 'clsx';
 import { api, ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { fmtDate, fmtDateTime } from '@/lib/format';
 import {
-  Badge, Button, Card, ConfirmDialog, Field, Input, KeyValue, LoadingState, Modal, PageHeader, Select, Tabs, Textarea, Tooltip, useToast,
+  Badge, Button, Card, ConfirmDialog, Field, Input, LoadingState, Modal, PageHeader, Select, Tabs, Textarea, Tooltip, useToast,
 } from '@/components/ui';
 import {
-  PolicyStatusBadge, ProposedNote, SLA_BREADCRUMB, Toggle, durationLabel, label, scopeLabel, targetLabel,
+  PolicyStatusBadge, ProposedNote, SLA_BREADCRUMB, Toggle, durationLabel, label,
   useSlaMeta, useSlaPolicies, type BusinessCalendar, type SimulationResult, type SlaChannel, type SlaMeta, type SlaPolicy, type SlaReminderRule, type SlaUnit,
 } from './shared';
 
@@ -33,7 +32,6 @@ const TABS = [
   { key: 'escalation', label: 'Escalation Rules' },
   { key: 'pause', label: 'Pause / Stop-Clock' },
   { key: 'test', label: 'Test / Simulation' },
-  { key: 'versions', label: 'Versions' },
 ];
 
 function blankPolicy(meta: SlaMeta, calendars: BusinessCalendar[]): SlaPolicy {
@@ -74,7 +72,6 @@ export default function SlaPolicyEditor() {
   const policies = useSlaPolicies();
 
   const saved = useMemo(() => policies.data?.policies.find((p) => p.id === id), [policies.data, id]);
-  const versions = useMemo(() => (saved ? policies.data!.policies.filter((p) => p.code === saved.code).sort((a, b) => b.version - a.version) : []), [policies.data, saved]);
   const calendars = policies.data?.calendars ?? [];
 
   const [draft, setDraft] = useState<SlaPolicy | null>(null);
@@ -85,7 +82,7 @@ export default function SlaPolicyEditor() {
     if (saved) { setDraft(structuredClone(saved)); setDirty(false); }
   }, [isNew, saved, meta.data, policies.data?.calendars]);
 
-  const editable = Boolean(draft && canEdit && (isNew || draft.status === 'DRAFT' || draft.status === 'TEST'));
+  const editable = Boolean(draft && canEdit && (isNew || draft.status !== 'RETIRED'));
   const update = (fn: (p: SlaPolicy) => void) => {
     setDraft((p) => { if (!p) return p; const n = structuredClone(p); fn(n); return n; });
     setDirty(true);
@@ -96,7 +93,7 @@ export default function SlaPolicyEditor() {
   const save = useMutation({
     mutationFn: (p: SlaPolicy) => (isNew ? api.post<{ policy: SlaPolicy }>('/sla/policies', p) : api.post<{ policy: SlaPolicy }>(`/sla/policies/${p.id}`, p)),
     onSuccess: (r) => {
-      toast.push({ tone: 'success', title: 'Draft saved', detail: `${r.policy.code} v${r.policy.version} saved as ${r.policy.status.toLowerCase()}. Test it before publishing.` });
+      toast.push({ tone: 'success', title: 'Saved', detail: `${r.policy.code} saved.` });
       invalidate();
       setDirty(false);
       if (isNew) navigate(`/admin/sla/policies/${r.policy.id}?tab=timer`, { replace: true });
@@ -110,7 +107,7 @@ export default function SlaPolicyEditor() {
     mutationFn: (p: SlaPolicy) => api.post<{ policy: SlaPolicy; simulation: { rows: SimulationResult['rows']; calendarName: string | null } }>(`/sla/policies/${p.id}/test`, { startAt: new Date(simStart).toISOString() }),
     onSuccess: (r) => {
       setSimulation({ policy: r.policy, startAt: new Date(simStart).toISOString(), ...r.simulation });
-      toast.push({ tone: 'success', title: 'Test completed', detail: 'The timeline below was calculated from this version. It can now be published.' });
+      toast.push({ tone: 'success', title: 'Test completed', detail: 'The timeline below was calculated from this policy. It can now be published.' });
       invalidate();
       setTab('test');
     },
@@ -121,7 +118,7 @@ export default function SlaPolicyEditor() {
   const publish = useMutation({
     mutationFn: (p: { id: string; effectiveFrom: string; changeSummary: string }) => api.post<{ policy: SlaPolicy }>(`/sla/policies/${p.id}/publish`, p),
     onSuccess: (r) => {
-      toast.push({ tone: 'success', title: `${r.policy.code} v${r.policy.version} published`, detail: 'Running SLA clocks were recalculated. The previous version, if any, is retired.' });
+      toast.push({ tone: 'success', title: `${r.policy.code} published`, detail: 'Running SLA clocks were recalculated.' });
       setPublishing(null);
       invalidate();
     },
@@ -142,19 +139,13 @@ export default function SlaPolicyEditor() {
     onError: (e) => toast.push({ tone: 'error', title: 'Could not discard', detail: errText(e) }),
   });
 
-  const newVersion = useMutation({
-    mutationFn: (pid: string) => api.post<{ policy: SlaPolicy }>(`/sla/policies/${pid}/new-version`, {}),
-    onSuccess: (r) => { toast.push({ tone: 'success', title: `Draft v${r.policy.version} created` }); invalidate(); navigate(`/admin/sla/policies/${r.policy.id}`); },
-    onError: (e) => toast.push({ tone: 'error', title: 'Could not create a new version', detail: errText(e) }),
-  });
-
   if (meta.isLoading || policies.isLoading || !meta.data || !draft) return <LoadingState />;
-  if (!isNew && !saved) return <div className="py-16 text-center text-sm text-ink-muted">This SLA policy version does not exist. <Link to="/admin/sla" className="text-essa-700 hover:underline">Back to SLA Management</Link></div>;
+  if (!isNew && !saved) return <div className="py-16 text-center text-sm text-ink-muted">This SLA policy does not exist. <Link to="/admin/sla" className="text-essa-700 hover:underline">Back to SLA Management</Link></div>;
   const m = meta.data;
-  const codeLocked = !isNew && versions.length > 1;
-  const readOnlyReason = !canEdit ? 'You can view this policy but not change it.' : draft.status === 'ACTIVE' ? 'This version is published and immutable. Create a new version to change it.' : draft.status === 'RETIRED' ? 'This version is retired. Create a new version to reuse it.' : null;
+  const codeLocked = !isNew;
+  const readOnlyReason = !canEdit ? 'You can view this policy but not change it.' : draft.status === 'RETIRED' ? 'This policy is retired.' : null;
 
-  const title = isNew ? 'Create SLA Policy' : `${draft.code} · v${draft.version}`;
+  const title = isNew ? 'Create SLA Policy' : draft.code;
 
   return (
     <div className="space-y-3">
@@ -171,13 +162,10 @@ export default function SlaPolicyEditor() {
         actions={
           <>
             <Button variant="ghost" onClick={() => navigate('/admin/sla')}><ArrowLeft size={14} /> Back</Button>
-            {editable && <Button variant="secondary" loading={save.isPending} disabled={!dirty && !isNew} onClick={() => save.mutate(draft)}><Save size={14} /> Save Draft</Button>}
-            {editable && !isNew && <Button variant="secondary" loading={test.isPending} disabled={dirty} title={dirty ? 'Save the draft first' : 'Run the simulation and mark this version as tested'} onClick={() => test.mutate(draft)}><FlaskConical size={14} /> Test</Button>}
+            {editable && <Button variant="secondary" loading={save.isPending} disabled={!dirty && !isNew} onClick={() => save.mutate(draft)}><Save size={14} /> Save</Button>}
+            {editable && !isNew && <Button variant="secondary" loading={test.isPending} disabled={dirty} title={dirty ? 'Save first' : 'Run the simulation and mark this policy as tested'} onClick={() => test.mutate(draft)}><FlaskConical size={14} /> Test</Button>}
             {!isNew && canPublish && (draft.status === 'DRAFT' || draft.status === 'TEST') && (
-              <Button disabled={dirty || draft.status !== 'TEST'} title={draft.status !== 'TEST' ? 'Run Test before publishing' : dirty ? 'Save the draft first' : 'Publish this version'} onClick={() => setPublishing({ effectiveFrom: draft.effectiveFrom, changeSummary: draft.changeSummary ?? '' })}><Send size={14} /> Publish</Button>
-            )}
-            {!isNew && canEdit && (draft.status === 'ACTIVE' || draft.status === 'RETIRED') && !versions.some((v) => v.status === 'DRAFT' || v.status === 'TEST') && (
-              <Button loading={newVersion.isPending} onClick={() => newVersion.mutate(draft.id)}><GitBranch size={14} /> Create New Version</Button>
+              <Button disabled={dirty || draft.status !== 'TEST'} title={draft.status !== 'TEST' ? 'Run Test before publishing' : dirty ? 'Save first' : 'Publish this policy'} onClick={() => setPublishing({ effectiveFrom: draft.effectiveFrom, changeSummary: draft.changeSummary ?? '' })}><Send size={14} /> Publish</Button>
             )}
             {!isNew && canPublish && draft.status === 'ACTIVE' && <Button variant="warning" onClick={() => setRetiring(true)}><XCircle size={14} /> Retire</Button>}
             {!isNew && canEdit && (draft.status === 'DRAFT' || draft.status === 'TEST') && <Button variant="ghost" onClick={() => setDeleting(true)} title="Discard this draft"><Trash2 size={14} /></Button>}
@@ -185,17 +173,10 @@ export default function SlaPolicyEditor() {
         }
       />
 
-      {readOnlyReason && (
-        <ProposedNote tone="info">
-          {readOnlyReason}
-          {versions.some((v) => v.status === 'DRAFT' || v.status === 'TEST') && draft.status === 'ACTIVE' && (
-            <> A draft is already open: <Link className="text-essa-700 hover:underline" to={`/admin/sla/policies/${versions.find((v) => v.status === 'DRAFT' || v.status === 'TEST')!.id}`}>open v{versions.find((v) => v.status === 'DRAFT' || v.status === 'TEST')!.version}</Link>.</>
-          )}
-        </ProposedNote>
-      )}
+      {readOnlyReason && <ProposedNote tone="info">{readOnlyReason}</ProposedNote>}
 
       <Card pad={false}>
-        <div className="px-3 pt-1"><Tabs tabs={TABS.filter((t) => isNew ? !['test', 'versions'].includes(t.key) : true)} active={tab} onChange={setTab} counts={{ reminders: draft.reminders.length }} /></div>
+        <div className="px-3 pt-1"><Tabs tabs={TABS.filter((t) => isNew ? t.key !== 'test' : true)} active={tab} onChange={setTab} counts={{ reminders: draft.reminders.length }} /></div>
         <div className="p-4">
           {tab === 'general' && <GeneralTab draft={draft} update={update} editable={editable} meta={m} codeLocked={codeLocked} />}
           {tab === 'timer' && <TimerTab draft={draft} update={update} editable={editable} meta={m} calendars={calendars} />}
@@ -214,29 +195,28 @@ export default function SlaPolicyEditor() {
               }}
             />
           )}
-          {tab === 'versions' && !isNew && <VersionsTab current={draft} versions={versions} canEdit={canEdit} canPublish={canPublish} onOpen={(v) => navigate(`/admin/sla/policies/${v.id}?tab=versions`)} onPublish={(v) => setPublishing({ effectiveFrom: v.effectiveFrom, changeSummary: v.changeSummary ?? '' })} onTest={(v) => navigate(`/admin/sla/policies/${v.id}?tab=test`)} />}
         </div>
       </Card>
 
       {/* ------------------------------------------------------ publish */}
       <Modal
-        open={Boolean(publishing)} onClose={() => setPublishing(null)} title={`Publish ${draft.code} v${draft.version}`}
-        footer={<><Button variant="ghost" onClick={() => setPublishing(null)}>Cancel</Button><Button loading={publish.isPending} onClick={() => publishing && publish.mutate({ id: draft.id, ...publishing })}>Publish version</Button></>}
+        open={Boolean(publishing)} onClose={() => setPublishing(null)} title={`Publish ${draft.code}`}
+        footer={<><Button variant="ghost" onClick={() => setPublishing(null)}>Cancel</Button><Button loading={publish.isPending} onClick={() => publishing && publish.mutate({ id: draft.id, ...publishing })}>Publish</Button></>}
       >
         {publishing && (
           <div className="space-y-3 text-sm">
-            <p className="text-xs text-ink-secondary">Publishing makes this version immutable and in force from the effective date. {versions.some((v) => v.status === 'ACTIVE') ? `The current active version v${versions.find((v) => v.status === 'ACTIVE')!.version} is retired.` : 'This is the first published version of this policy.'} Running SLA clocks are recalculated against the new rules; runtime instances keep the policy version they were created with in their history.</p>
+            <p className="text-xs text-ink-secondary">Publishing puts this policy in force from the effective date. Running SLA clocks are recalculated against the new rules.</p>
             <Field label="Effective From" required><Input type="date" value={publishing.effectiveFrom} onChange={(e) => setPublishing((p) => p && { ...p, effectiveFrom: e.target.value })} className="w-44" /></Field>
-            <Field label="Change Summary" hint="Shown in the version history and the audit log"><Textarea rows={2} value={publishing.changeSummary} onChange={(e) => setPublishing((p) => p && { ...p, changeSummary: e.target.value })} /></Field>
+            <Field label="Change Summary" hint="Shown in the audit log"><Textarea rows={2} value={publishing.changeSummary} onChange={(e) => setPublishing((p) => p && { ...p, changeSummary: e.target.value })} /></Field>
             <p className="text-2xs text-ink-muted">Published by you, {fmtDate(new Date().toISOString())}. Recorded in the Audit Log.</p>
           </div>
         )}
       </Modal>
-      <ConfirmDialog open={retiring} onClose={() => setRetiring(false)} tone="warning" title={`Retire ${draft.code} v${draft.version}`} confirmLabel="Retire policy" requireReason="Reason for retiring" loading={retire.isPending}
-        message={<p>No new SLA instances will be created from this policy. Existing runtime instances keep the version they were created with. Create a new version afterwards if the policy should continue with different rules.</p>}
+      <ConfirmDialog open={retiring} onClose={() => setRetiring(false)} tone="warning" title={`Retire ${draft.code}`} confirmLabel="Retire policy" requireReason="Reason for retiring" loading={retire.isPending}
+        message={<p>No new SLA instances will be created from this policy. Existing runtime clocks keep their history.</p>}
         onConfirm={(reason) => retire.mutate({ id: draft.id, reason: reason ?? '' })} />
       <ConfirmDialog open={deleting} onClose={() => setDeleting(false)} tone="danger" title="Discard this draft?" confirmLabel="Discard draft" loading={del.isPending}
-        message={<p>Draft v{draft.version} of {draft.code} is deleted. Published versions are never deleted.</p>}
+        message={<p>Draft {draft.code} is deleted.</p>}
         onConfirm={() => del.mutate(draft.id)} />
     </div>
   );
@@ -249,9 +229,9 @@ function GeneralTab({ draft, update, editable, meta, codeLocked }: { draft: SlaP
   const scopeHint = meta.scopeTypes.find((s) => s.code === draft.scopeType)?.hint;
   return (
     <div className="space-y-4">
-      <p className="text-xs text-ink-muted">Defines where the SLA applies, what starts it, and who owns it. <span className="text-ink-faint">BPD basis: SLA targets differ by invoice / activity type; approval and missing-document timers are separate.</span></p>
+      <p className="text-xs text-ink-muted">Defines where the SLA applies, what starts it, and who owns it.</p>
       <div className="grid gap-4 md:grid-cols-2">
-        <Field label="SLA Code" required hint={codeLocked ? 'Immutable after first publish — shared by every version of this policy.' : 'Stable unique key, e.g. SERVICE_AP_VERIFICATION. Immutable after first publish.'}>
+        <Field label="SLA Code" required hint={codeLocked ? 'The SLA code cannot be changed after creation.' : 'Stable unique key, e.g. SERVICE_AP_VERIFICATION.'}>
           <Input value={draft.code} disabled={ro || codeLocked} maxLength={50} className="w-full font-mono uppercase" onChange={(e) => update((p) => { p.code = e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, '_'); })} />
         </Field>
         <Field label="SLA Name" required>
@@ -309,7 +289,7 @@ function GeneralTab({ draft, update, editable, meta, codeLocked }: { draft: SlaP
           <Toggle checked={draft.provisional} disabled={ro} label="Provisional — value to be confirmed" onChange={(v) => update((p) => { p.provisional = v; })} />
           <div className="min-w-0 flex-1">
             <p className="text-xs font-semibold text-ink">Provisional — target still to be confirmed by ESSA</p>
-            <p className="text-2xs text-ink-muted">A provisional policy can be saved and tested but stays Draft: it cannot be published until the flag is cleared (BPD §11.3 — Tax Team SLA to be confirmed).</p>
+            <p className="text-2xs text-ink-muted">A provisional policy can be saved and tested but stays Draft: it cannot be published until the flag is cleared.</p>
             {draft.provisional && <Input value={draft.provisionalNote ?? ''} disabled={ro} maxLength={200} placeholder="What is waiting for confirmation" className="mt-2 w-full" onChange={(e) => update((p) => { p.provisionalNote = e.target.value; })} />}
           </div>
         </div>
@@ -335,9 +315,6 @@ function TimerTab({ draft, update, editable, meta, calendars }: { draft: SlaPoli
   return (
     <div className="space-y-4">
       <p className="text-xs text-ink-muted">Defines the target duration and the calendar used to calculate the due time. The engine calculates start, warning and due time when the runtime instance is created.</p>
-      <ProposedNote>
-        <span className="font-semibold">BPD gap.</span> The SLA matrix gives numeric values but does not state whether they are calendar days or working days. Until ESSA confirms, the unit is shown as <span className="font-semibold">to be confirmed</span> on every screen — the policy does not silently assume one.
-      </ProposedNote>
       <div className="grid gap-4 md:grid-cols-2">
         <Field label="Target Duration" required hint="Leave blank when the stage does not apply to this type — no clock runs.">
           <Input type="number" min={0} max={365} value={t.duration ?? ''} placeholder="Not applicable" disabled={ro} className="w-full" onChange={(e) => update((p) => { p.timer.duration = e.target.value === '' ? null : Math.max(0, Number(e.target.value)); })} />
@@ -352,9 +329,6 @@ function TimerTab({ draft, update, editable, meta, calendars }: { draft: SlaPoli
             })}>
               {meta.units.map((u) => <option key={u.code} value={u.code}>{u.label}</option>)}
             </Select>
-            <Tooltip text={t.unitConfirmed ? 'ESSA has confirmed this unit.' : 'Unit interpretation not yet confirmed by ESSA (BPD gap).'}>
-              <Badge tone={t.unitConfirmed ? 'success' : 'warning'} className="whitespace-nowrap">{t.unitConfirmed ? 'Confirmed' : 'Unit TBC'}</Badge>
-            </Tooltip>
           </span>
         </Field>
         <Field label="Business Calendar" required={business} hint={business ? 'Controls weekends, holidays and working hours for this policy.' : 'Only used for Business Days / Business Hours.'}>
@@ -383,7 +357,7 @@ function TimerTab({ draft, update, editable, meta, calendars }: { draft: SlaPoli
         <ToggleRow label="Dashboard SLA Indicator" hint="Count this policy's instances in the dashboard SLA widgets." checked={t.dashboardIndicator} disabled={ro} onChange={(v) => update((p) => { p.timer.dashboardIndicator = v; })} />
         <ToggleRow label="Unit confirmed by ESSA" hint="Tick once ESSA has confirmed whether the target is measured in calendar or working time." checked={t.unitConfirmed} disabled={ro} onChange={(v) => update((p) => { p.timer.unitConfirmed = v; })} />
       </div>
-      <p className="text-2xs text-ink-muted">Runtime effect: the due time is recalculated only when a governed pause / resume rule applies or a new policy version is published. Design note: weekends and holidays are never hardcoded — maintain them in the <Link to="/admin/sla/calendar" className="text-essa-700 hover:underline">Business Calendar</Link>.</p>
+      <p className="text-2xs text-ink-muted">Runtime effect: the due time is recalculated only when a governed pause / resume rule applies or the policy is republished. Design note: weekends and holidays are never hardcoded — maintain them in the <Link to="/admin/sla/calendar" className="text-essa-700 hover:underline">Business Calendar</Link>.</p>
     </div>
   );
 }
@@ -421,7 +395,7 @@ function RemindersTab({ draft, update, editable, meta }: { draft: SlaPolicy; upd
   return (
     <div className="space-y-3">
       <p className="text-xs text-ink-muted">Progressive reminders sent while the SLA is still open and no required action has been completed. Sending a reminder never completes, approves or rejects the underlying transaction.</p>
-      <ProposedNote tone="info"><span className="font-semibold">BPD §11.4.</span> Approval reminders at 24 hours, 48 hours, 3 days and 5 days; missing-document follow-up every 7 days. The BPD states reminder intervals are configurable in Administration — they are editable here without a code change.</ProposedNote>
+      <ProposedNote tone="info">Approval reminders at 24 hours, 48 hours, 3 days and 5 days; missing-document follow-up every 7 days. Reminder intervals are configurable in Administration — they are editable here without a code change.</ProposedNote>
       <div className="overflow-x-auto rounded-lg border border-line">
         <table className="w-full text-left text-xs">
           <thead>
@@ -470,7 +444,7 @@ function RemindersTab({ draft, update, editable, meta }: { draft: SlaPolicy; upd
           p.reminders.push({ id: `rem-${Date.now()}`, seq, after: { value: last ? last.after.value * 2 : 24, unit: last?.after.unit ?? 'HOURS' }, repeat: false, recipient: last?.recipient ?? (p.owner && meta.recipients.some((r) => r.code === p.owner) ? p.owner : 'AP_TEAM'), channels: ['EMAIL'], template: meta.templates[0] ?? '', enabled: true });
         })}><Plus size={13} /> Add reminder level</Button>
       )}
-      <p className="text-2xs text-ink-muted">Notification wording lives in the Notification configuration — templates are selected here, never edited, so text can change without a deployment. The recipient <span className="font-medium">AP Supervisor</span> is the BPD's "AP Manager".</p>
+      <p className="text-2xs text-ink-muted">Notification wording lives in the Notification configuration — templates are selected here, never edited, so text can change without a deployment.</p>
     </div>
   );
 }
@@ -492,7 +466,7 @@ function EscalationTab({ draft, update, editable, meta }: { draft: SlaPolicy; up
   return (
     <div className="space-y-4">
       <p className="text-xs text-ink-muted">Defines what happens after SLA breach / final reminder. Escalation changes assignment and notification only — it is never an automatic business approval. Every escalation is recorded against the SLA instance and the invoice audit trail.</p>
-      <ProposedNote tone="info"><span className="font-semibold">BPD §11.4.</span> Approval escalates to the next approval level after the final reminder, and to the AP Manager (AP Supervisor persona) when no higher level exists. Missing-document chase escalates to the Head of Function after the first unanswered reminder. Recipient resolution reuses the workflow / approval hierarchy — there is no second approver master inside SLA.</ProposedNote>
+      <ProposedNote tone="info">Approval escalates to the next approval level after the final reminder, and to the AP Manager (AP Supervisor persona) when no higher level exists. Missing-document chase escalates to the Head of Function after the first unanswered reminder. Recipient resolution reuses the workflow / approval hierarchy — there is no second approver master inside SLA.</ProposedNote>
       <div className="flex items-start justify-between gap-3 rounded-lg border border-line bg-canvas px-3 py-2.5">
         <div><p className="text-xs font-semibold text-ink">Escalation enabled</p><p className="text-2xs text-ink-muted">Off for stage targets that only measure turnaround (e.g. Payment); on for approval and vendor-response policies.</p></div>
         <Toggle checked={e.enabled} disabled={ro} label="Escalation enabled" onChange={(v) => update((p) => { p.escalation.enabled = v; })} />
@@ -541,9 +515,6 @@ function PauseTab({ draft, update, editable, meta }: { draft: SlaPolicy; update:
   return (
     <div className="space-y-4">
       <p className="text-xs text-ink-muted">Optional stop-clock configuration for periods where the owning team cannot progress because the invoice is waiting on an external dependency.</p>
-      <ProposedNote>
-        <span className="font-semibold">PROPOSED DESIGN — the BPD does not define stop-clock / pause rules.</span> Do not activate any pause behaviour until ESSA explicitly confirms which waiting states pause or continue the SLA. Internal AP waiting should not be paused unless explicitly approved. Only configured reason codes are allowed — no free executable rules.
-      </ProposedNote>
       <div className="overflow-x-auto rounded-lg border border-line">
         <table className="w-full text-left text-xs">
           <thead><tr className="bg-essa-600 text-2xs uppercase tracking-wide text-white"><th className="px-2 py-2">Pause Condition</th><th className="px-2 py-2 text-center">Pause?</th><th className="px-2 py-2">Resume Event</th><th className="px-2 py-2 text-center">Reason Required?</th></tr></thead>
@@ -583,12 +554,12 @@ function TestTab({ draft, simulation, simStart, setSimStart, dirty, editable, on
     <div className="space-y-4">
       <p className="text-xs text-ink-muted">Verify expected due dates, reminders and escalation before publishing. Simulation is read-only: it creates no operational SLA instance, sends no notification and changes no invoice.</p>
       <div className="flex flex-wrap items-end gap-3">
-        <Field label="Policy"><Input value={`${draft.code} v${draft.version}`} disabled readOnly className="w-64" /></Field>
+        <Field label="Policy"><Input value={draft.code} disabled readOnly className="w-64" /></Field>
         <Field label="Start Date/Time" required><Input type="datetime-local" value={simStart} onChange={(e) => setSimStart(e.target.value)} className="w-56" /></Field>
         <Button variant="secondary" onClick={onPreview}>Preview timeline</Button>
-        {editable && <Button loading={running} disabled={dirty} title={dirty ? 'Save the draft first' : 'Run the test and mark this version as tested'} onClick={onRun}><FlaskConical size={14} /> Run Test</Button>}
+        {editable && <Button loading={running} disabled={dirty} title={dirty ? 'Save first' : 'Run the test and mark this policy as tested'} onClick={onRun}><FlaskConical size={14} /> Run Test</Button>}
       </div>
-      {draft.lastTestedAt && <p className="text-2xs text-ink-muted">Last tested {fmtDateTime(draft.lastTestedAt)}. Any edit clears the test and returns the version to Draft.</p>}
+      {draft.lastTestedAt && <p className="text-2xs text-ink-muted">Last tested {fmtDateTime(draft.lastTestedAt)}. Any edit clears the test.</p>}
       {simulation ? <SimulationTable result={simulation} /> : <p className="rounded-lg border border-dashed border-line py-8 text-center text-xs text-ink-muted">Run a preview to see the calculated timeline.</p>}
     </div>
   );
@@ -609,78 +580,7 @@ export function SimulationTable({ result }: { result: SimulationResult }) {
           ))}
         </tbody>
       </table>
-      <p className="border-t border-line-soft px-2 py-1.5 text-2xs text-ink-muted">Calculated for {result.policy.code} v{result.policy.version}{result.calendarName ? ` on ${result.calendarName}` : ''}, from {fmtDateTime(result.startAt)}. Times are shown in your local timezone.</p>
+      <p className="border-t border-line-soft px-2 py-1.5 text-2xs text-ink-muted">Calculated for {result.policy.code}{result.calendarName ? ` on ${result.calendarName}` : ''}, from {fmtDateTime(result.startAt)}. Times are shown in your local timezone.</p>
     </div>
-  );
-}
-
-// -------------------------------------------------------------- Versions
-function VersionsTab({ current, versions, canEdit, canPublish, onOpen, onPublish, onTest }: { current: SlaPolicy; versions: SlaPolicy[]; canEdit: boolean; canPublish: boolean; onOpen: (v: SlaPolicy) => void; onPublish: (v: SlaPolicy) => void; onTest: (v: SlaPolicy) => void }) {
-  const live = versions.find((v) => v.status === 'ACTIVE');
-  const draft = versions.find((v) => v.status === 'DRAFT' || v.status === 'TEST');
-  return (
-    <div className="space-y-4">
-      <p className="text-xs text-ink-muted">Controlled Draft → Test → Active → Retired lifecycle with immutable published versions. Runtime SLA instances store the policy version used when they were created, so history stays reproducible after a newer version becomes active.</p>
-      <div className="overflow-x-auto rounded-lg border border-line">
-        <table className="w-full text-left text-xs">
-          <thead><tr className="bg-essa-600 text-2xs uppercase tracking-wide text-white"><th className="px-2 py-2">Version</th><th className="px-2 py-2">Status</th><th className="px-2 py-2">Effective From</th><th className="px-2 py-2">Changed By</th><th className="px-2 py-2">Change Summary</th><th className="px-2 py-2">Actions</th></tr></thead>
-          <tbody>
-            {versions.map((v) => (
-              <tr key={v.id} className={clsx('border-t border-line-soft', v.id === current.id && 'bg-essa-50/50')}>
-                <td className="px-2 py-1.5 font-semibold">v{v.version}{v.id === current.id && <span className="ml-1 text-2xs font-normal text-ink-muted">(open)</span>}</td>
-                <td className="px-2 py-1.5"><PolicyStatusBadge status={v.status} /></td>
-                <td className="px-2 py-1.5 whitespace-nowrap">{fmtDate(v.effectiveFrom)}</td>
-                <td className="px-2 py-1.5">{v.publishedBy ?? v.changedBy}<span className="block text-2xs text-ink-muted">{fmtDateTime(v.publishedAt ?? v.changedAt)}</span></td>
-                <td className="px-2 py-1.5 text-ink-secondary">{v.changeSummary || '—'}</td>
-                <td className="px-2 py-1.5 whitespace-nowrap">
-                  <span className="flex gap-1">
-                    {v.id !== current.id && <Button size="sm" variant="ghost" onClick={() => onOpen(v)}>View</Button>}
-                    {canEdit && (v.status === 'DRAFT' || v.status === 'TEST') && v.id !== current.id && <Button size="sm" variant="ghost" onClick={() => onOpen(v)}>Edit</Button>}
-                    {canEdit && (v.status === 'DRAFT' || v.status === 'TEST') && <Button size="sm" variant="ghost" onClick={() => onTest(v)}>Test</Button>}
-                    {canPublish && v.status === 'TEST' && v.id === current.id && <Button size="sm" variant="ghost" onClick={() => onPublish(v)}>Publish</Button>}
-                  </span>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {live && draft && (
-        <Card title={`Compare draft v${draft.version} with active v${live.version}`}>
-          <VersionDiff a={live} b={draft} />
-        </Card>
-      )}
-    </div>
-  );
-}
-
-function VersionDiff({ a, b }: { a: SlaPolicy; b: SlaPolicy }) {
-  const meta = useSlaMeta().data;
-  const rows: { field: string; before: string; after: string }[] = [
-    { field: 'Name', before: a.name, after: b.name },
-    { field: 'Scope', before: scopeLabel(a, meta), after: scopeLabel(b, meta) },
-    { field: 'Stage', before: label(meta?.stages, a.stage), after: label(meta?.stages, b.stage) },
-    { field: 'Trigger', before: label(meta?.triggerEvents, a.triggerEvent), after: label(meta?.triggerEvents, b.triggerEvent) },
-    { field: 'Target', before: targetLabel(a), after: targetLabel(b) },
-    { field: 'Calendar / timezone', before: `${a.timer.calendarId ?? '—'} · ${a.timer.timezone}`, after: `${b.timer.calendarId ?? '—'} · ${b.timer.timezone}` },
-    { field: 'Warning before breach', before: durationLabel(a.timer.warningBefore), after: durationLabel(b.timer.warningBefore) },
-    { field: 'Reminders', before: a.reminders.filter((r) => r.enabled).map((r) => durationLabel(r.after)).join(', ') || 'none', after: b.reminders.filter((r) => r.enabled).map((r) => durationLabel(r.after)).join(', ') || 'none' },
-    { field: 'Escalation', before: a.escalation.enabled ? `${label(meta?.breachConditions, a.escalation.breachCondition)} → ${label(meta?.escalationTargets, a.escalation.primaryTarget)}` : 'off', after: b.escalation.enabled ? `${label(meta?.breachConditions, b.escalation.breachCondition)} → ${label(meta?.escalationTargets, b.escalation.primaryTarget)}` : 'off' },
-    { field: 'Pause rules on', before: a.pauseRules.filter((r) => r.pause).map((r) => r.label).join(', ') || 'none', after: b.pauseRules.filter((r) => r.pause).map((r) => r.label).join(', ') || 'none' },
-    { field: 'Effective from', before: fmtDate(a.effectiveFrom), after: fmtDate(b.effectiveFrom) },
-  ];
-  const changed = rows.filter((r) => r.before !== r.after);
-  if (!changed.length) return <p className="text-xs text-ink-muted">The draft is identical to the active version.</p>;
-  return (
-    <dl className="grid gap-2 sm:grid-cols-2">
-      {changed.map((r) => (
-        <div key={r.field} className="rounded-lg border border-line bg-canvas p-2.5">
-          <KeyValue label={r.field}>
-            <span className="block text-2xs text-ink-muted line-through">{r.before}</span>
-            <span className="block text-xs font-medium text-essa-700">{r.after}</span>
-          </KeyValue>
-        </div>
-      ))}
-    </dl>
   );
 }

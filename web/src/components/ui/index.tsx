@@ -4,6 +4,7 @@
  * green primary, subtle borders, dense-but-readable tables.
  */
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import clsx from 'clsx';
 import { AlertTriangle, ArrowDown, ArrowUp, CheckCircle2, ChevronLeft, ChevronRight, ChevronsUpDown, Info, Loader2, SearchX, ShieldAlert, X, XCircle, Inbox } from 'lucide-react';
@@ -926,21 +927,41 @@ export function InfoTip({ title, meaning, formula, action, className }: { title?
  * that are not KPI metrics (status meanings, truncated cell text).
  */
 export function Tooltip({ text, children, className }: { text: string; children: ReactNode; className?: string }) {
-  const [open, setOpen] = useState(false);
+  // Rendered through a portal with fixed positioning so the bubble is never
+  // clipped by overflow containers (e.g. scrollable tables) and never renders
+  // half outside the viewport (review, 25 Aug).
+  const ref = useRef<HTMLSpanElement>(null);
+  const [pos, setPos] = useState<{ left: number; top: number; above: boolean } | null>(null);
+  const WIDTH = 224; // w-56
+  const show = () => {
+    const r = ref.current?.getBoundingClientRect();
+    if (!r) return;
+    const margin = 8;
+    const left = Math.min(Math.max(r.left + r.width / 2 - WIDTH / 2, margin), window.innerWidth - WIDTH - margin);
+    // Flip above the trigger when there is little room below.
+    const above = window.innerHeight - r.bottom < 120 && r.top > 120;
+    setPos({ left, top: above ? r.top - 6 : r.bottom + 6, above });
+  };
+  const hide = () => setPos(null);
   return (
     <span
+      ref={ref}
       className={clsx('relative inline-flex', className)}
-      onMouseEnter={() => setOpen(true)}
-      onMouseLeave={() => setOpen(false)}
-      onFocus={() => setOpen(true)}
-      onBlur={() => setOpen(false)}
+      onMouseEnter={show}
+      onMouseLeave={hide}
+      onFocus={show}
+      onBlur={hide}
       tabIndex={0}
     >
       {children}
-      {open && (
-        <span className="pointer-events-none absolute left-1/2 top-full z-40 mt-1.5 w-56 -translate-x-1/2 rounded-lg border border-line bg-white p-2 text-left text-2xs leading-relaxed normal-case tracking-normal text-ink-secondary shadow-pop">
+      {pos && createPortal(
+        <span
+          className="pointer-events-none fixed z-50 w-56 rounded-lg border border-line bg-white p-2 text-left text-2xs leading-relaxed normal-case tracking-normal text-ink-secondary shadow-pop"
+          style={{ left: pos.left, top: pos.top, transform: pos.above ? 'translateY(-100%)' : undefined }}
+        >
           {text}
-        </span>
+        </span>,
+        document.body
       )}
     </span>
   );

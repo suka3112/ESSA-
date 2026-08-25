@@ -469,7 +469,7 @@ export default function DashboardPage() {
       {role === 'ADMIN' && (
         <>
           {/* What is configured on the platform. Click a tile to see the list. */}
-          <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 xl:grid-cols-6">
+          <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
             <StatCard
               primary label="Invoice Categories" value={categories.length} icon={<FolderTree size={13} />} onClick={() => setAdminList('categories')} caption="configured categories"
               tip={{ meaning: 'All invoice categories configured on the platform.', action: 'Maintain them in Invoice Configuration.' }}

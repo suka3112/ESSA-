@@ -3,7 +3,7 @@ import { NavLink, Link, useLocation, useNavigate } from 'react-router-dom';
 import clsx from 'clsx';
 import {
   ChevronDown, CircleHelp, ClipboardCheck, FileSpreadsheet, FileText,
-  LayoutDashboard, LogOut, Menu, Settings, Landmark,
+  LayoutDashboard, LogOut, Menu, Settings, ShieldCheck, Landmark,
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { displayRoles } from '@/lib/format';
@@ -35,10 +35,8 @@ const NAV: NavItem[] = [
   // Administration → Workflows & Approval Hierarchy rather than as a standalone screen.
   /**
    * Administration is a self-contained area for the Administrator. Review,
-   * 24 Aug: roles are not combined in the prototype, so the AP Supervisor no
-   * longer holds CONFIG_VIEW or AUDIT_VIEW and never sees this menu. The Audit
-   * Log lives here as an administration screen; technical/console logs stay
-   * server-side only.
+   * 24 Aug: roles are not combined in the prototype, so the AP Supervisor holds
+   * neither CONFIG_VIEW nor AUDIT_VIEW and never sees these menus.
    */
   {
     label: 'Administration', to: '/admin/configuration', icon: <Settings size={16} />, perm: 'CONFIG_VIEW',
@@ -47,9 +45,14 @@ const NAV: NavItem[] = [
       { label: 'SLA & Reminders', to: '/admin/sla', perm: 'CONFIG_VIEW' },
       { label: 'Workflows & Approval Hierarchy', to: '/admin/workflows', perm: 'CONFIG_VIEW' },
       { label: 'Users & Roles', to: '/admin/users', perm: 'USER_ADMIN' },
-      { label: 'Audit Log', to: '/audit', perm: 'AUDIT_VIEW' },
     ],
   },
+  /**
+   * The Audit Log is its own destination rather than an item inside
+   * Administration (review, 25 Aug): it covers every transaction on the
+   * platform, not only the things configured under Administration.
+   */
+  { label: 'Audit Log', to: '/audit', icon: <ShieldCheck size={16} />, perm: 'AUDIT_VIEW' },
 ];
 
 /** Approved branding: EAPA — ESSA Accounts Payable Automation. */

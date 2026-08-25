@@ -1,7 +1,5 @@
 import express from 'express';
 import cors from 'cors';
-import fs from 'fs';
-import path from 'path';
 import { authMiddleware, correlationMiddleware, errorMiddleware } from './core/http';
 import { authRouter } from './routes/auth';
 import { invoiceRouter } from './routes/invoices';
@@ -33,24 +31,6 @@ export function createApp() {
   api.use(adminRouter);
   api.use(miscRouter);
   app.use('/api/v1', api);
-
-  // ---------------------------------------------------------------------------
-  // Production / hosted mode: serve the built web portal (web/dist) from this
-  // same process so the whole platform runs as ONE web service (Render, Railway,
-  // Azure App Service, ...). In local development the Vite dev server on :5173
-  // proxies /api to this API instead, and web/dist does not exist - so this
-  // block is a no-op there.
-  // ---------------------------------------------------------------------------
-  const webDist = process.env.WEB_DIST ?? path.resolve(__dirname, '../../web/dist');
-  if (fs.existsSync(path.join(webDist, 'index.html'))) {
-    app.use(express.static(webDist, { index: false, maxAge: '1h' }));
-    // SPA fallback: every non-API route returns index.html and React Router
-    // resolves the page client-side (deep links / refresh keep working).
-    app.get(/^\/(?!api\/).*/, (_req, res) => {
-      res.setHeader('Cache-Control', 'no-store');
-      res.sendFile(path.join(webDist, 'index.html'));
-    });
-  }
 
   app.use(errorMiddleware);
   return app;

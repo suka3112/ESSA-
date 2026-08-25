@@ -119,6 +119,7 @@ export default function UsersPage() {
   const [deleteRole, setDeleteRole] = useState<RoleRow | null>(null);
   const [userSearch, setUserSearch] = useState('');
   const [userRoleFilter, setUserRoleFilter] = useState('');
+  const [newUser, setNewUser] = useState<{ name: string; email: string; title: string; roleIds: string[]; enabled: boolean } | null>(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ['users'],
@@ -133,6 +134,21 @@ export default function UsersPage() {
       qc.invalidateQueries({ queryKey: ['users'] });
     },
     onError: (e) => toast.push({ tone: 'error', title: 'Update failed', detail: e instanceof ApiError ? e.body.message : String(e) }),
+  });
+
+  /**
+   * Adding a user does not create a credential — people sign in with their ESSA
+   * corporate account. It registers that identity with the platform and gives it
+   * the roles it should hold; until then a colleague who signs in sees nothing.
+   */
+  const createUser = useMutation({
+    mutationFn: (p: { name: string; email: string; title: string; roleIds: string[]; enabled: boolean }) => api.post('/users', p),
+    onSuccess: () => {
+      toast.push({ tone: 'success', title: 'User added', detail: 'They can sign in with their corporate account. The change is recorded in the audit log.' });
+      setNewUser(null);
+      qc.invalidateQueries({ queryKey: ['users'] });
+    },
+    onError: (e) => toast.push({ tone: 'error', title: 'Could not add the user', detail: e instanceof ApiError ? e.body.message : String(e) }),
   });
 
   const roleAction = useMutation({
@@ -201,6 +217,17 @@ export default function UsersPage() {
         breadcrumb={[{ label: 'Home', to: '/' }, { label: 'Administration' }, { label: 'Users & Roles' }]}
         title="Users, Roles & Permissions"
         description="Users are signed in with their corporate account. What they can see and do on this platform is decided by the roles assigned here."
+        actions={
+          tab === 'users' ? (
+            <Button size="sm" onClick={() => setNewUser({ name: '', email: '', title: '', roleIds: [], enabled: true })}>
+              <CirclePlus size={13} /> Add user
+            </Button>
+          ) : tab === 'roles' ? (
+            <Button size="sm" onClick={() => openRoleEditor()}>
+              <CirclePlus size={13} /> Create role
+            </Button>
+          ) : undefined
+        }
       />
       <Card pad={false}>
         <div className="px-3 pt-2">
@@ -280,11 +307,6 @@ export default function UsersPage() {
         {/* ---------------------------------------------------------- roles */}
         {tab === 'roles' && (
           <>
-            <div className="flex items-center justify-end p-3">
-              <Button size="sm" onClick={() => openRoleEditor()}>
-                <CirclePlus size={13} /> Create role
-              </Button>
-            </div>
             <DataTable
               dense
               columns={[
@@ -481,6 +503,80 @@ export default function UsersPage() {
         }
         onConfirm={() => deleteRole && roleAction.mutate({ op: 'DELETE', row: { id: deleteRole.id } })}
       />
+      {/* ------------------------------------------------------- add user */}
+      <Modal
+        open={Boolean(newUser)}
+        onClose={() => setNewUser(null)}
+        title="Add user"
+        wide
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setNewUser(null)}>Cancel</Button>
+            <Button
+              loading={createUser.isPending}
+              disabled={!newUser?.name.trim() || !newUser?.email.trim()}
+              onClick={() => newUser && createUser.mutate(newUser)}
+            >
+              Add user
+            </Button>
+          </>
+        }
+      >
+        {newUser && (
+          <div className="space-y-3">
+            <p className="rounded-md bg-canvas px-2.5 py-2 text-2xs text-ink-muted">
+              This does not create a password. The person signs in with their ESSA corporate account — adding them here
+              is what gives that account access to this platform, and the roles decide what they can do.
+            </p>
+            <div className="grid gap-3 md:grid-cols-2">
+              <Field label="Full name" required>
+                <Input value={newUser.name} placeholder="e.g. Dewi Lestari" onChange={(e) => setNewUser((u) => u && ({ ...u, name: e.target.value }))} />
+              </Field>
+              <Field label="Corporate email" required hint="The address they sign in with">
+                <Input
+                  type="email"
+                  value={newUser.email}
+                  placeholder="e.g. dewi.lestari@essa.co.id"
+                  onChange={(e) => setNewUser((u) => u && ({ ...u, email: e.target.value }))}
+                />
+              </Field>
+            </div>
+            <Field label="Job title" hint="Shown on the users list; it does not affect what they can do">
+              <Input value={newUser.title} placeholder="e.g. AP Processor" onChange={(e) => setNewUser((u) => u && ({ ...u, title: e.target.value }))} />
+            </Field>
+            <Field label="Roles" hint="What the person can see and do. Leave every role unticked to add the account with no access yet.">
+              <div className="space-y-1.5 rounded-md border border-line p-2.5">
+                {data.roles.map((r) => (
+                  <label key={r.id} className="flex items-start gap-2 text-xs text-ink-secondary">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 h-3.5 w-3.5 accent-essa-600"
+                      checked={newUser.roleIds.includes(r.id)}
+                      onChange={(e) =>
+                        setNewUser((u) => u && ({
+                          ...u,
+                          roleIds: e.target.checked ? [...u.roleIds, r.id] : u.roleIds.filter((x) => x !== r.id),
+                        }))
+                      }
+                    />
+                    <span>
+                      <span className="font-medium text-ink">{r.name}</span>
+                      {r.description && <span className="block text-2xs text-ink-muted">{r.description}</span>}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </Field>
+            <Field label="Status">
+              <Select value={newUser.enabled ? 'enabled' : 'disabled'} onChange={(e) => setNewUser((u) => u && ({ ...u, enabled: e.target.value === 'enabled' }))} className="w-full">
+                <option value="enabled">Enabled — they can sign in now</option>
+                <option value="disabled">Disabled — add the account but keep it closed for now</option>
+              </Select>
+            </Field>
+          </div>
+        )}
+      </Modal>
+
     </div>
   );
 }

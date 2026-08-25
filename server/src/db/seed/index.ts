@@ -148,9 +148,10 @@ export function runScenarioSeed(): void {
     before?: Record<string, unknown>; after?: Record<string, unknown>;
   }[] = [
     {
-      d: 45, actor: USERS[5], type: 'CONFIG_PUBLISHED', cat: 'CONFIGURATION', action: 'PUBLISH',
-      entity: 'CONFIGURATION', id: 'cfg-1', ref: 'v1.0', reason: 'Baseline configuration activated',
-      before: { Status: 'Testing' }, after: { Status: 'Active' },
+      d: 45, actor: USERS[5], type: 'CONFIG_CATEGORY_UPDATE', cat: 'CONFIGURATION', action: 'UPDATE',
+      entity: 'INVOICE_CATEGORY', id: 'cat-catering', ref: 'Catering Invoice',
+      reason: 'Guest allowance agreed with the site team',
+      before: { 'Guest allowance': '0%' }, after: { 'Guest allowance': '5%' },
     },
     {
       d: 14, actor: USERS[4], type: 'VENDOR_NEGATIVE_MARKED', cat: 'VENDOR', action: 'NEGATIVE_FLAG',
@@ -159,9 +160,10 @@ export function runScenarioSeed(): void {
       after: { 'Negative vendor flag': 'Yes', 'AP automation': 'Disabled' },
     },
     {
-      d: 9, actor: USERS[5], type: 'CONFIG_DRAFT_CREATED', cat: 'CONFIGURATION', action: 'CREATE',
-      entity: 'CONFIGURATION', id: 'cfg-2', ref: 'v1.1', reason: 'Draft for manpower tolerance tightening',
-      after: { Version: 'v1.1', Status: 'Draft' },
+      d: 9, actor: USERS[5], type: 'CONFIG_RULE_UPDATE', cat: 'CONFIGURATION', action: 'UPDATE',
+      entity: 'VALIDATION_RULE', id: 'rule-mnp-001', ref: 'Manpower N-way tolerance',
+      reason: 'Tightened after the July reconciliation review',
+      before: { Tolerance: '1.0%' }, after: { Tolerance: '0.5%' },
     },
     {
       d: 7, actor: USERS[5], type: 'ROLE_ASSIGNED', cat: 'ACCESS', action: 'ASSIGN',

@@ -14,26 +14,19 @@ import type {
 } from '../../core/types';
 import { isoAgo, DAY } from '../../core/ids';
 
+/**
+ * The platform runs on one live configuration (review, 25 Aug). Draft/publish
+ * versioning was removed from the product: administrators change the live
+ * configuration directly and every change is audited. The single record is kept
+ * so each invoice can still record which configuration processed it.
+ */
 export const CONFIG_VERSIONS: ConfigurationVersion[] = [
   {
-    id: 'cfg-1', versionNo: 'v1.0', label: 'Initial AP rollout baseline', status: 'ACTIVE',
+    id: 'cfg-1', versionNo: 'v1.0', label: 'ESSA AP configuration', status: 'ACTIVE',
     effectiveFrom: '2026-05-01', createdBy: 'Surya Nugraha', createdAt: isoAgo(120 * DAY),
     approvedBy: 'Maya Puspita', approvedAt: isoAgo(105 * DAY),
     publishedBy: 'Surya Nugraha', publishedAt: isoAgo(103 * DAY),
-    notes: 'Baseline categories, documents, fields, prompts, mappings and rules from the requirement workshops.',
-  },
-  {
-    id: 'cfg-2', versionNo: 'v1.1', label: 'Manpower & catering N-way tightening', status: 'DRAFT',
-    createdBy: 'Surya Nugraha', createdAt: isoAgo(9 * DAY),
-    notes: 'Draft: tighten manpower N-way tolerance to 0.5%, add housekeeping category documents.',
-  },
-  {
-    id: 'cfg-0', versionNo: 'v0.9', label: 'POC pilot configuration', status: 'RETIRED',
-    effectiveFrom: '2026-02-01', effectiveTo: '2026-04-30',
-    createdBy: 'Surya Nugraha', createdAt: isoAgo(210 * DAY),
-    approvedBy: 'Maya Puspita', approvedAt: isoAgo(200 * DAY),
-    publishedBy: 'Surya Nugraha', publishedAt: isoAgo(198 * DAY),
-    notes: 'Pilot configuration used during POC. Retired at v1.0 activation.',
+    notes: 'Categories, documents, fields, prompts, mappings and rules from the requirement workshops.',
   },
 ];
 

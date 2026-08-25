@@ -14,7 +14,7 @@ import { useQuery } from '@tanstack/react-query';
 import { ChevronDown, Loader2, ShieldCheck } from 'lucide-react';
 import clsx from 'clsx';
 import { api } from '@/lib/api';
-import { useAuth } from '@/lib/auth';
+import { useAuth, wasExplicitlySignedOut } from '@/lib/auth';
 import { Button } from '@/components/ui';
 
 interface DirectoryUser {
@@ -42,7 +42,10 @@ export default function LoginPage() {
   const navigate = useNavigate();
   const [error, setError] = useState<string | null>(null);
   const [busyUser, setBusyUser] = useState<string | null>(null);
-  const [personasOpen, setPersonasOpen] = useState(false);
+  // After an explicit "Sign out" the SSO gate waits for the user instead of
+  // auto-redirecting, so a different persona can be chosen (demo / UAT).
+  const [signedOut] = useState(() => wasExplicitlySignedOut());
+  const [personasOpen, setPersonasOpen] = useState(() => wasExplicitlySignedOut());
   const started = useRef(false);
 
   const { data: users } = useQuery({
@@ -53,7 +56,7 @@ export default function LoginPage() {
 
   // Automatic "redirect" to Microsoft sign-in — no form, no 2FA screen.
   useEffect(() => {
-    if (started.current) return;
+    if (started.current || signedOut) return;
     started.current = true;
     const t = window.setTimeout(() => {
       ssoLogin()
@@ -61,7 +64,7 @@ export default function LoginPage() {
         .catch((e) => setError(e instanceof Error ? e.message : 'Single sign-on failed'));
     }, 700);
     return () => window.clearTimeout(t);
-  }, [ssoLogin, navigate]);
+  }, [ssoLogin, navigate, signedOut]);
 
   const retry = () => {
     setError(null);
@@ -91,7 +94,14 @@ export default function LoginPage() {
         </p>
         <p className="mt-0.5 text-2xs font-semibold uppercase tracking-widest text-ink-muted">ESSA Accounts Payable Automation</p>
 
-        {!error ? (
+        {signedOut && !error ? (
+          <div className="mt-8 space-y-3">
+            <p className="text-xs text-ink-secondary">You have been signed out.</p>
+            <Button className="w-full" onClick={retry}>
+              <MicrosoftMark /> Sign in with Microsoft
+            </Button>
+          </div>
+        ) : !error ? (
           <div className="mt-8 flex flex-col items-center gap-3">
             <span className="flex items-center gap-2 rounded-lg border border-line px-4 py-2.5 text-sm font-medium text-ink-secondary">
               <MicrosoftMark /> Redirecting to Microsoft sign-in…

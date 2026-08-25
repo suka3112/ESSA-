@@ -10,7 +10,9 @@
  *    (Field / Before / After, or the context for that kind of activity) and who,
  *    why and exactly when on the right — followed by one plain-language
  *    sentence describing the record, so it can be read without decoding it.
- *  · Administration screen: AUDIT_VIEW is held by the Administrator only.
+ *  · Its own top-level destination — it covers every transaction on the
+ *    platform, not only what is configured under Administration. AUDIT_VIEW is
+ *    held by the Administrator only.
  */
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
@@ -256,7 +258,7 @@ export default function AuditLogPage() {
   return (
     <div className="space-y-3">
       <PageHeader
-        breadcrumb={[{ label: 'Home', to: '/' }, { label: 'Administration' }, { label: 'Audit Log' }]}
+        breadcrumb={[{ label: 'Home', to: '/' }, { label: 'Audit Log' }]}
         title="Audit Log"
         description="Every transaction on the platform is recorded for accountability and transparency. Records cannot be edited or deleted."
       />

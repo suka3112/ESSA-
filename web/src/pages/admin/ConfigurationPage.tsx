@@ -12,7 +12,7 @@
  *   (The generated AI prompts are development artefacts and are not shown.)
  *
  * Everything structural stays wired to the existing configuration API
- * (config versions, entity actions, publish lifecycle). A few presentation-only
+ * (the live configuration and its entity actions). A few presentation-only
  * attributes that the backend does not model yet (PO number series, content
  * classification signals, split behavior, classification hints, field alias
  * hints) are kept as local UI state, flagged in the right rail exactly like the
@@ -171,13 +171,18 @@ export default function ConfigurationPage() {
   const qc = useQueryClient();
   const canEdit = hasPerm('CONFIG_EDIT');
 
+  /**
+   * One live configuration (review, 25 Aug). Draft / publish versioning was
+   * removed from the product: administrators change the live configuration
+   * directly and every change is recorded in the Audit Log. The single version
+   * record survives so each invoice can still say which configuration
+   * processed it.
+   */
   const versionsQ = useQuery({
     queryKey: ['config-versions'],
     queryFn: () => api.get<{ items: VersionRow[] }>('/configuration/versions'),
   });
-  const versions = versionsQ.data?.items ?? [];
-  const activeVersion = versions.find((v) => v.status === 'ACTIVE');
-  const versionId = params.get('version') ?? activeVersion?.id;
+  const versionId = versionsQ.data?.items.find((v) => v.status === 'ACTIVE')?.id ?? versionsQ.data?.items[0]?.id;
 
   const bundleQ = useQuery({
     queryKey: ['config-bundle', versionId],
@@ -195,11 +200,6 @@ export default function ConfigurationPage() {
     next.set('tab', t);
     setParams(next, { replace: true });
   };
-  const setVersion = (v: string) => {
-    const next = new URLSearchParams(params);
-    next.set('version', v);
-    setParams(next, { replace: true });
-  };
 
   const entityAction = useMutation({
     mutationFn: (p: { entity: string; op: string; row: Record<string, unknown> }) => api.post(`/configuration/entities/${p.entity}`, { op: p.op, row: p.row }),
@@ -211,31 +211,6 @@ export default function ConfigurationPage() {
   });
   const act = (entity: string, op: string, row: Record<string, unknown>) => entityAction.mutate({ entity, op, row });
 
-  const transition = useMutation({
-    mutationFn: (p: { id: string; action: string; effectiveFrom?: string }) => api.post(`/configuration/versions/${p.id}/transition`, p),
-    onSuccess: (_r, v) => {
-      toast.push({ tone: 'success', title: `Version ${v.action === 'PUBLISH' ? 'published' : titleCase(v.action)}`, detail: v.action === 'PUBLISH' ? 'New invoices will process on this version from its effective date.' : undefined });
-      invalidate();
-    },
-    onError: (e) => toast.push({ tone: 'error', title: 'Transition failed', detail: e instanceof ApiError ? e.body.message : String(e) }),
-  });
-
-  const createDraft = useMutation({
-    mutationFn: (p: { label: string; notes?: string }) => api.post<{ version: VersionRow }>('/configuration/versions', p),
-    onSuccess: (r) => {
-      toast.push({ tone: 'success', title: `Draft ${r.version.versionNo} created`, detail: 'You are now editing the draft — publish it when ready.' });
-      invalidate();
-      // Jump straight onto the new draft so editing unlocks immediately.
-      setVersion(r.version.id);
-    },
-    onError: (e) => toast.push({ tone: 'error', title: 'Could not create draft', detail: e instanceof ApiError ? e.body.message : String(e) }),
-  });
-
-  const [publishOpen, setPublishOpen] = useState(false);
-  const [draftOpen, setDraftOpen] = useState(false);
-  const [draftLabel, setDraftLabel] = useState('');
-  const [draftNotes, setDraftNotes] = useState('');
-
   // ---- shared selection + presentation-only state (survives tab switches)
   const [selectedCategoryId, setSelectedCategoryId] = useState<string>('');
   const [selectedCatDocId, setSelectedCatDocId] = useState<string>('');
@@ -246,8 +221,7 @@ export default function ConfigurationPage() {
   const [hintsMap, setHintsMap] = useState<Record<string, string>>({}); // doc type id -> classification hint
   const [fieldHints, setFieldHints] = useState<Record<string, string>>({}); // field id -> alias hint
 
-  const editingLocked = Boolean(bundle && ['ACTIVE', 'RETIRED'].includes(bundle.version.status));
-  const mayEdit = canEdit && !editingLocked;
+  const mayEdit = canEdit;
 
   if (!versionId || !bundle) return <LoadingState label="Loading configuration…" />;
 
@@ -275,72 +249,8 @@ export default function ConfigurationPage() {
       <PageHeader
         breadcrumb={[{ label: 'Home', to: '/' }, { label: 'Administration' }, { label: 'Invoice Configuration' }]}
         title="Invoice Configuration"
-        description="Versioned configuration of categories, documents, fields, prompts, mappings, rules and notifications. Published versions are immutable — changes are prepared as a new draft, tested and published with an effective date."
-        actions={
-          <>
-            <Select value={versionId} onChange={(e) => setVersion(e.target.value)} aria-label="Configuration version">
-              {versions.map((v) => (
-                <option key={v.id} value={v.id}>
-                  {v.versionNo} ({v.status === 'ACTIVE' ? `Active${v.effectiveFrom ? ` · ${v.effectiveFrom}` : ''}` : titleCase(v.status)})
-                </option>
-              ))}
-            </Select>
-            {canEdit && (
-              <Button variant="secondary" size="sm" onClick={() => setDraftOpen(true)}>
-                <CirclePlus size={14} /> New draft version
-              </Button>
-            )}
-            {hasPerm('CONFIG_PUBLISH') && bundle.version.status === 'DRAFT' && (
-              <Button variant="secondary" size="sm" onClick={() => transition.mutate({ id: versionId, action: 'TEST' })}>Move to testing</Button>
-            )}
-            {hasPerm('CONFIG_PUBLISH') && ['DRAFT', 'TESTING'].includes(bundle.version.status) && (
-              <Button size="sm" onClick={() => setPublishOpen(true)}>
-                <Upload size={14} /> Publish
-              </Button>
-            )}
-          </>
-        }
+        description="The invoice categories, documents, fields and validation rules the platform processes invoices with. Changes apply to invoices received from now on — invoices already in progress keep the settings they started on."
       />
-
-      {/* Version metadata strip removed (design review §15) — the screen starts at the tabs; version control lives in the page header. */}
-
-      {/* Read-only guard: published versions are immutable by design. Instead of
-          leaving the user staring at disabled fields, explain why and give the
-          one-click path to an editable draft (or jump to an existing one). */}
-      {editingLocked && canEdit && (() => {
-        const openDraft = versions.find((v) => ['DRAFT', 'TESTING'].includes(v.status));
-        return (
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-300 bg-semantic-warningBg px-3 py-2.5 shadow-card">
-            <span className="flex items-start gap-2 text-xs text-semantic-warning">
-              <Lock size={14} className="mt-0.5 shrink-0" />
-              <span>
-                <span className="font-semibold">Read-only — {bundle.version.versionNo} is {bundle.version.status === 'ACTIVE' ? 'live' : 'retired'}.</span>{' '}
-                Live configuration is never edited directly: changes are made on a draft, tested, then published with an effective date.
-              </span>
-            </span>
-            {openDraft ? (
-              <Button size="sm" onClick={() => setVersion(openDraft.id)}>
-                <Pencil size={13} /> Continue editing {openDraft.versionNo} ({titleCase(openDraft.status)})
-              </Button>
-            ) : (
-              <Button
-                size="sm"
-                loading={createDraft.isPending}
-                onClick={() => createDraft.mutate({ label: `Edits to ${bundle.version.versionNo}`, notes: `Draft created from ${bundle.version.versionNo} (${bundle.version.label})` })}
-              >
-                <CirclePlus size={13} /> Start editing — create draft
-              </Button>
-            )}
-          </div>
-        );
-      })()}
-
-      {editingLocked && !canEdit && (
-        <div className="flex items-start gap-2 rounded-lg border border-line bg-canvas px-3 py-2.5 text-xs text-ink-secondary shadow-card">
-          <Lock size={14} className="mt-0.5 shrink-0 text-ink-muted" />
-          This configuration version is published and read-only. Ask an administrator with configuration-edit rights to prepare a draft.
-        </div>
-      )}
 
       <Card pad={false}>
         <div className="px-3 pt-2">
@@ -375,69 +285,13 @@ export default function ConfigurationPage() {
         ) : (
           <>
             {tab === 'rules' && (
-              <RulesGrid
-                {...sharedTabProps}
-                versions={versions}
-                versionId={versionId}
-                onVersionChange={setVersion}
-                onSaveConfiguration={() => {
-                  invalidate();
-                  toast.push({ tone: 'success', title: 'Configuration saved', detail: `Validation rules recorded on ${bundle.version.versionNo}.` });
-                }}
-              />
+              <RulesGrid {...sharedTabProps} />
             )}
             {tab === 'workflows' && <WorkflowsPointer />}
           </>
         )}
       </Card>
 
-      <ConfirmDialog
-        open={publishOpen}
-        onClose={() => setPublishOpen(false)}
-        loading={transition.isPending}
-        title={`Publish configuration ${bundle.version.versionNo}`}
-        confirmLabel="Publish version"
-        message={
-          <div className="space-y-1.5 text-xs">
-            <p>Publishing activates this version from today and retires the currently active version. The published version becomes <span className="font-semibold">immutable</span>; every invoice records the configuration version used at processing time.</p>
-            <p className="text-ink-muted">Requires configuration-approver authority. This action is audited (CONFIG_PUBLISHED).</p>
-          </div>
-        }
-        onConfirm={() => transition.mutate({ id: versionId, action: 'PUBLISH' })}
-      />
-
-      <Modal
-        open={draftOpen}
-        onClose={() => setDraftOpen(false)}
-        title="Create draft configuration version"
-        footer={
-          <>
-            <Button variant="ghost" onClick={() => setDraftOpen(false)}>Cancel</Button>
-            <Button
-              loading={createDraft.isPending}
-              disabled={!draftLabel.trim()}
-              onClick={() => {
-                createDraft.mutate({ label: draftLabel, notes: draftNotes || undefined });
-                setDraftOpen(false);
-              }}
-            >
-              Create draft
-            </Button>
-          </>
-        }
-      >
-        <div className="space-y-3">
-          <Field label="Version label" required>
-            <Input value={draftLabel} onChange={(e) => setDraftLabel(e.target.value)} placeholder="e.g. Housekeeping category rollout" />
-          </Field>
-          <Field label="Notes">
-            <Textarea rows={3} maxLength={300} value={draftNotes} onChange={(e) => setDraftNotes(e.target.value)} />
-          </Field>
-          <p className="rounded-md bg-canvas px-2.5 py-2 text-2xs text-ink-muted">
-            The draft starts from the active baseline. Configure, run sample tests, then publish with an effective date. Active configuration is never modified directly.
-          </p>
-        </div>
-      </Modal>
     </div>
   );
 }
@@ -587,17 +441,30 @@ function CategoryTree({
 
 // -------------------------------------------------- Invoice Category editor
 
+/**
+ * The centre pane reads the invoice type; changing it happens in a dialog
+ * (review, 25 Aug: editing and adding are pop-ups, not forms wedged into the
+ * card that is showing the data).
+ */
 function CategoryEditor(p: TabProps) {
-  const { bundle, mayEdit, act, category, series, seriesMap, setSeriesMap, signalsMap, setSignalsMap, onAddCategory } = p;
-  const [name, setName] = useState<string | null>(null);
-  const [deleteOpen, setDeleteOpen] = useState(false);
-  if (!category) return <EmptyPane text="Select or create an invoice type on the left." />;
+  const { bundle, mayEdit, act, category, series, seriesMap, setSeriesMap, signalsMap, setSignalsMap } = p;
+  const [draft, setDraft] = useState<{ name: string; series: string; signals: string } | null>(null);
+  const [toggleOpen, setToggleOpen] = useState(false);
+  if (!category) return <EmptyPane text="Select an invoice type on the left." />;
 
-  const displayName = name ?? category.name;
   const catSeries = seriesMap[category.id] ?? series(category);
   const signals = signalsMap[category.id] ?? category.description ?? '';
-
   const sharing = bundle.categories.filter((c) => c.id !== category.id && c.poBased === category.poBased && series(c) === catSeries && category.poBased);
+
+  const openEditor = () => setDraft({ name: category.name, series: category.poBased ? catSeries : '', signals });
+
+  const saveDraft = () => {
+    if (!draft) return;
+    if (draft.name.trim() && draft.name.trim() !== category.name) act('categories', 'UPDATE', { ...category, name: draft.name.trim() });
+    setSeriesMap((m) => ({ ...m, [category.id]: draft.series }));
+    setSignalsMap((m) => ({ ...m, [category.id]: draft.signals }));
+    setDraft(null);
+  };
 
   return (
     <div className="flex flex-col xl:flex-row">
@@ -607,73 +474,51 @@ function CategoryEditor(p: TabProps) {
             <h3 className="text-base font-semibold text-ink">{category.name}</h3>
             <p className="text-xs text-ink-muted">{category.poBased ? 'PO' : 'Non-PO'} · how the pipeline detects this invoice type before classifying pages</p>
           </div>
-          <div className="flex gap-2">
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={!mayEdit}
-              onClick={() => {
-                const el = document.getElementById('invoice-type-name') as HTMLInputElement | null;
-                el?.focus();
-                el?.select();
-              }}
-            >
-              <Pencil size={13} /> Edit / change category
+          {mayEdit && (
+            <Button variant="secondary" size="sm" onClick={openEditor}>
+              <Pencil size={13} /> Edit invoice type
             </Button>
-            {/* Add invoice type removed — the category set is fixed (SAP CR needed for new types). */}
-          </div>
+          )}
         </div>
 
-        <div className="max-w-3xl space-y-4">
-          <div>
-            <label htmlFor="invoice-type-name" className="mb-1 block text-2xs font-semibold uppercase tracking-wide text-ink-muted">Invoice type name</label>
-            <Input id="invoice-type-name" value={displayName} disabled={!mayEdit} onChange={(e) => setName(e.target.value)} />
-            <div className="mt-1 flex items-center justify-between gap-2">
-              <p className="text-2xs text-ink-muted">Renaming updates this configuration version; published versions stay immutable.</p>
-              {name !== null && name !== category.name && (
-                <Button size="sm" variant="secondary" onClick={() => { act('categories', 'UPDATE', { ...category, name }); setName(null); }}>
-                  <Save size={12} /> Save name
-                </Button>
-              )}
-            </div>
-          </div>
-
-          <div>
-            <label className="mb-1 block text-2xs font-semibold uppercase tracking-wide text-ink-muted">PO number series</label>
-            <Input value={category.poBased ? catSeries : ''} placeholder="Leave blank for Non-PO" disabled={!mayEdit || !category.poBased} onChange={(e) => setSeriesMap((m) => ({ ...m, [category.id]: e.target.value }))} />
-            <p className="mt-1 text-2xs text-ink-muted">SAP PO number prefix(es) that indicate this invoice type. Leave blank for Non-PO.</p>
-          </div>
-
+        <dl className="max-w-3xl space-y-3.5">
+          <ReadField label="Invoice type name" value={category.name} hint="The name is used on every screen that shows this invoice type." />
+          <ReadField
+            label="PO number series"
+            value={category.poBased ? catSeries : 'Not applicable — Non-PO'}
+            mono={category.poBased}
+            hint="SAP PO number prefix(es) that indicate this invoice type."
+          />
           {sharing.length > 0 && (
             <div className="rounded-lg border border-red-200 bg-semantic-errorBg/60 px-3 py-2.5">
               <p className="text-2xs font-semibold uppercase tracking-wide text-semantic-error">Shares this series with</p>
-              <p className="mt-1 font-mono text-xs text-ink-secondary">
-                {sharing.map((c) => c.name).join(', ')} — the PO number alone can't tell these apart. Content classification below resolves it.
+              <p className="mt-1 text-xs text-ink-secondary">
+                {sharing.map((c) => c.name).join(', ')} — the PO number alone can&apos;t tell these apart, so the
+                classification signals below resolve it.
               </p>
             </div>
           )}
+          <ReadField
+            label="Content classification signals"
+            value={signals || 'Not set'}
+            hint="Used to tell this type apart from the ones it shares a PO series with."
+            multiline
+          />
+        </dl>
 
-          <div>
-            <label className="mb-1 block text-2xs font-semibold uppercase tracking-wide text-ink-muted">Content classification signals</label>
-            <Textarea rows={5} maxLength={600} value={signals} disabled={!mayEdit} onChange={(e) => setSignalsMap((m) => ({ ...m, [category.id]: e.target.value }))} />
-            <p className="mt-1 text-2xs text-ink-muted">Used in the AI prompt to disambiguate this type from the ones it shares a PO series with.</p>
-          </div>
-
-          {/* Enable/Disable only — deleting fixed invoice types is not allowed.
-              Disabling a category stops processing that invoice type. */}
-          <button
-            disabled={!mayEdit}
-            onClick={() => setDeleteOpen(true)}
-            className={clsx(
-              'w-full rounded-md border py-2 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50',
-              category.active
-                ? 'border-amber-300 text-semantic-warning hover:bg-semantic-warningBg'
-                : 'border-essa-300 text-essa-700 hover:bg-essa-50'
-            )}
-          >
-            {category.active ? 'Disable this invoice type — stop processing it' : 'Enable this invoice type'}
-          </button>
-        </div>
+        {/* Enable/Disable only — the invoice-type set is fixed (SAP change request). */}
+        <button
+          disabled={!mayEdit}
+          onClick={() => setToggleOpen(true)}
+          className={clsx(
+            'mt-4 w-full max-w-3xl rounded-md border py-2 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50',
+            category.active
+              ? 'border-amber-300 text-semantic-warning hover:bg-semantic-warningBg'
+              : 'border-essa-300 text-essa-700 hover:bg-essa-50'
+          )}
+        >
+          {category.active ? 'Disable this invoice type — stop processing it' : 'Enable this invoice type'}
+        </button>
       </div>
 
       {/* right rail */}
@@ -694,15 +539,51 @@ function CategoryEditor(p: TabProps) {
           {/* Review §16: no internal implementation talk in the UI. */}
           <p className="mb-1 text-2xs font-semibold uppercase tracking-wide text-ink-muted">How changes are saved</p>
           <p className="text-2xs leading-relaxed text-ink-muted">
-            Changes are saved to this configuration version. They apply to invoices received after the version is
-            published, so invoices already in progress keep the settings they started on.
+            Changes are saved as they are made and recorded in the Audit Log. They apply to invoices received from
+            now on, so invoices already in progress keep the settings they started on.
           </p>
         </div>
       </aside>
 
+      <Modal
+        open={Boolean(draft)}
+        onClose={() => setDraft(null)}
+        title={`Edit invoice type — ${category.name}`}
+        wide
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setDraft(null)}>Cancel</Button>
+            <Button disabled={!draft?.name.trim()} onClick={saveDraft}>Save changes</Button>
+          </>
+        }
+      >
+        {draft && (
+          <div className="space-y-3">
+            <Field label="Invoice type name" required hint="Used on every screen that shows this invoice type">
+              <Input value={draft.name} onChange={(e) => setDraft((d) => d && ({ ...d, name: e.target.value }))} />
+            </Field>
+            <Field label="PO number series" hint={category.poBased ? 'SAP PO number prefix(es) that indicate this invoice type' : 'Non-PO invoices have no PO series'}>
+              <Input
+                value={draft.series}
+                disabled={!category.poBased}
+                placeholder={category.poBased ? 'e.g. 4201' : 'Not applicable'}
+                onChange={(e) => setDraft((d) => d && ({ ...d, series: e.target.value }))}
+              />
+            </Field>
+            <Field label="Content classification signals" hint="What tells this type apart from the ones it shares a PO series with">
+              <Textarea
+                rows={4} maxLength={600}
+                value={draft.signals}
+                onChange={(e) => setDraft((d) => d && ({ ...d, signals: e.target.value }))}
+              />
+            </Field>
+          </div>
+        )}
+      </Modal>
+
       <ConfirmDialog
-        open={deleteOpen}
-        onClose={() => setDeleteOpen(false)}
+        open={toggleOpen}
+        onClose={() => setToggleOpen(false)}
         tone={category.active ? 'warning' : 'primary'}
         title={`${category.active ? 'Disable' : 'Enable'} invoice type — ${category.name}`}
         confirmLabel={category.active ? 'Disable invoice type' : 'Enable invoice type'}
@@ -713,8 +594,21 @@ function CategoryEditor(p: TabProps) {
               : 'Enabling resumes processing of this invoice type.'}
           </p>
         }
-        onConfirm={() => { act('categories', 'TOGGLE', { id: category.id }); setDeleteOpen(false); }}
+        onConfirm={() => { act('categories', 'TOGGLE', { id: category.id }); setToggleOpen(false); }}
       />
+    </div>
+  );
+}
+
+/** A configuration value as it reads when nobody is editing it. */
+function ReadField({ label, value, hint, mono, multiline }: { label: string; value: string; hint?: string; mono?: boolean; multiline?: boolean }) {
+  return (
+    <div>
+      <dt className="mb-1 text-2xs font-semibold uppercase tracking-wide text-ink-muted">{label}</dt>
+      <dd className={clsx('rounded-md border border-line bg-canvas px-2.5 py-2 text-xs text-ink', mono && 'font-mono', multiline && 'whitespace-pre-wrap leading-relaxed')}>
+        {value}
+      </dd>
+      {hint && <p className="mt-1 text-2xs text-ink-muted">{hint}</p>}
     </div>
   );
 }
@@ -737,6 +631,8 @@ function EmptyPane({ text }: { text: string }) {
 function DocumentsCatalog(p: TabProps) {
   const { bundle, mayEdit, act, categoryId, category, catDocs, docType, fieldCount, selectedCatDocId, setSelectedCatDocId, splitMap, setSplitMap, hintsMap, setHintsMap } = p;
   const [editing, setEditing] = useState<CatDoc | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [newDoc, setNewDoc] = useState({ documentTypeId: '', mandatory: true, contentCheck: true });
   if (!category) return <EmptyPane text="Select an invoice type on the left." />;
 
   const rows = catDocs(categoryId);
@@ -760,9 +656,13 @@ function DocumentsCatalog(p: TabProps) {
           <div className="flex flex-wrap items-start justify-between gap-2 p-4 pb-2">
             <div>
               <h3 className="text-base font-semibold text-ink">{category.name}</h3>
-              <p className="text-xs text-ink-muted">{category.poBased ? 'PO' : 'Non-PO'} · {rows.length} document types in this invoice type's catalog</p>
+              <p className="text-xs text-ink-muted">{category.poBased ? 'PO' : 'Non-PO'} · {rows.length} document types expected in this invoice bundle</p>
             </div>
-            {/* Document types are fixed — enable/disable and required-or-not only. */}
+            {mayEdit && (
+              <Button variant="secondary" size="sm" onClick={() => setAdding(true)}>
+                <Plus size={13} /> Add document
+              </Button>
+            )}
           </div>
 
           <div className="overflow-x-auto scrollbar-thin">
@@ -828,46 +728,105 @@ function DocumentsCatalog(p: TabProps) {
                 <p className="mt-1 text-2xs text-ink-muted">The slug the page classifier assigns to this document type. Must be unique within this invoice type's catalog.</p>
               </div>
 
+              {/* Read-only summary — changing any of this happens in the Edit
+                  dialog, so the card that shows the data is never also a form
+                  (review, 25 Aug). */}
               <div className="mb-3">
-                <p className="mb-1 text-2xs font-semibold uppercase tracking-wide text-ink-muted">Split behavior</p>
-                <Select
-                  value={scattered(selected) ? 'SCATTERED' : 'CONTIGUOUS'}
-                  disabled={!mayEdit}
-                  onChange={(e) => setSplitMap((m) => ({ ...m, [selected.id]: e.target.value === 'SCATTERED' }))}
-                  className="w-full !text-xs"
-                >
-                  <option value="CONTIGUOUS">Contiguous — starts a new section on any page gap</option>
-                  <option value="SCATTERED">Scattered — pages interleave within the bundle</option>
-                </Select>
+                <p className="mb-1 text-2xs font-semibold uppercase tracking-wide text-ink-muted">Split behaviour</p>
+                <p className="rounded-md border border-line bg-canvas px-2.5 py-1.5 text-xs text-ink">
+                  {scattered(selected) ? 'Scattered' : 'Contiguous'}
+                </p>
                 <p className="mt-1 text-2xs text-ink-muted">
-                  Use Scattered for document types that tend to appear as interleaved pages within a bundle (e.g. daily sheets), and Contiguous for documents that are always one continuous block (e.g. invoice, PO).
+                  {scattered(selected)
+                    ? 'Pages of this document interleave within the bundle, e.g. daily sheets.'
+                    : 'This document is always one continuous block, e.g. the invoice or the PO.'}
                 </p>
               </div>
 
               <div className="mb-3">
                 <p className="mb-1 text-2xs font-semibold uppercase tracking-wide text-ink-muted">Required for extraction</p>
-                <div className="flex items-start gap-2">
-                  <Toggle
-                    checked={required(selected)}
-                    disabled={!mayEdit}
-                    onChange={(v) => act('categoryDocuments', 'UPDATE', { ...selected, requirementType: v ? 'MANDATORY' : 'OPTIONAL' })}
-                    label="Required for extraction"
-                  />
-                  <p className="text-2xs text-ink-secondary">
-                    {required(selected) ? 'Required — extraction blocks if this document is absent' : 'Optional — extraction continues if this document is absent'}
-                  </p>
-                </div>
-                <p className="mt-1 text-2xs text-ink-muted">Applies to this invoice type only. Toggle this on for documents that must be in the upload before Fields to Capture can run.</p>
+                <p className="rounded-md border border-line bg-canvas px-2.5 py-1.5 text-xs text-ink">
+                  {required(selected) ? 'Required' : 'Optional'}
+                </p>
+                <p className="mt-1 text-2xs text-ink-muted">
+                  {required(selected)
+                    ? 'Extraction blocks if this document is absent from the upload.'
+                    : 'Extraction continues if this document is absent from the upload.'}
+                </p>
               </div>
+
+              {mayEdit && (
+                <Button variant="secondary" size="sm" className="w-full" onClick={() => setEditing(selected)}>
+                  <Pencil size={13} /> Edit document
+                </Button>
+              )}
             </>
           ) : (
-            <p className="text-2xs text-ink-muted">Select a document row to edit its classification and split settings.</p>
+            <p className="text-2xs text-ink-muted">Select a document row to see its classification and split settings.</p>
           )}
         </aside>
       </div>
 
       {/* UI/UX review: the generated AI prompt is a development artefact and is
           not shown to administrators. */}
+
+      {/* Add document — an existing document type from the catalogue is added
+          to this invoice type's expected bundle. */}
+      <Modal
+        open={adding}
+        onClose={() => { setAdding(false); setNewDoc({ documentTypeId: '', mandatory: true, contentCheck: true }); }}
+        title={`Add document — ${category.name}`}
+        wide
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setAdding(false)}>Cancel</Button>
+            <Button
+              disabled={!newDoc.documentTypeId}
+              onClick={() => {
+                act('categoryDocuments', 'CREATE', {
+                  categoryId,
+                  documentTypeId: newDoc.documentTypeId,
+                  requirementType: newDoc.mandatory ? 'MANDATORY' : 'OPTIONAL',
+                  checkMode: newDoc.contentCheck ? 'EXTRACT_AND_VALIDATE' : 'AVAILABILITY_ONLY',
+                  contentCheckRequired: newDoc.contentCheck,
+                  blocking: newDoc.mandatory,
+                  allowMultiple: false,
+                  sequence: rows.length + 1,
+                  active: true,
+                  configVersionId: 'cfg-1',
+                });
+                setAdding(false);
+                setNewDoc({ documentTypeId: '', mandatory: true, contentCheck: true });
+              }}
+            >
+              Add document
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <Field label="Document type" required hint="Only document types that are not already expected for this invoice type">
+            <Select value={newDoc.documentTypeId} onChange={(e) => setNewDoc((d) => ({ ...d, documentTypeId: e.target.value }))} className="w-full">
+              <option value="">Select…</option>
+              {bundle.documentTypes
+                .filter((dt) => !rows.some((r) => r.documentTypeId === dt.id))
+                .map((dt) => <option key={dt.id} value={dt.id}>{dt.name}</option>)}
+            </Select>
+          </Field>
+          <Field label="Required for extraction" hint="Required blocks the invoice when the document is missing; optional raises a warning">
+            <Select value={newDoc.mandatory ? 'yes' : 'no'} onChange={(e) => setNewDoc((d) => ({ ...d, mandatory: e.target.value === 'yes' }))} className="w-full">
+              <option value="yes">Required — block the invoice if it is missing</option>
+              <option value="no">Optional — warn only</option>
+            </Select>
+          </Field>
+          <Field label="What is checked" hint="Whether the platform reads the content of this document or only confirms it is present">
+            <Select value={newDoc.contentCheck ? 'content' : 'availability'} onChange={(e) => setNewDoc((d) => ({ ...d, contentCheck: e.target.value === 'content' }))} className="w-full">
+              <option value="content">Availability + content — read the document and validate it</option>
+              <option value="availability">Availability only — confirm it is present</option>
+            </Select>
+          </Field>
+        </div>
+      </Modal>
 
       {/* Edit document modal — matches the approved dialog */}
       <EditDocumentModal
@@ -978,8 +937,9 @@ function EditDocumentModal({
 function FieldsToCapture(p: TabProps) {
   const { bundle, mayEdit, act, categoryId, category, catDocs, docType, fieldsOf, selectedCatDocId, setSelectedCatDocId, fieldHints, setFieldHints } = p;
   const [selectedFieldId, setSelectedFieldId] = useState<string>('');
-  const [adding, setAdding] = useState(false);
-  const [draft, setDraft] = useState({ label: '', fieldCode: '', hint: '' });
+  // One draft drives both Add field and Edit field, and both open as a dialog
+  // rather than turning the rail into a form (review, 25 Aug).
+  const [draft, setDraft] = useState<{ original?: DocField; label: string; hint: string } | null>(null);
   const [promptOverride, setPromptOverride] = useState<Record<string, string>>({});
   if (!category) return <EmptyPane text="Select an invoice type on the left." />;
 
@@ -1033,7 +993,7 @@ function FieldsToCapture(p: TabProps) {
                 {catDoc.active ? 'Exclude document' : 'Include document'}
               </Button>
               <Button variant="ghost" size="sm" disabled={!mayEdit} onClick={() => act('categoryDocuments', 'DELETE', { id: catDoc.id })}>Remove</Button>
-              <Button size="sm" disabled={!mayEdit} onClick={() => { setAdding(true); setSelectedFieldId(''); setDraft({ label: '', fieldCode: '', hint: '' }); }}>
+              <Button size="sm" disabled={!mayEdit} onClick={() => setDraft({ label: '', hint: '' })}>
                 <Plus size={13} /> Add field
               </Button>
             </div>
@@ -1059,11 +1019,11 @@ function FieldsToCapture(p: TabProps) {
               </thead>
               <tbody>
                 {fields.map((f, i) => {
-                  const sel = !adding && (selectedField?.id === f.id);
+                  const sel = selectedField?.id === f.id;
                   return (
                     <tr
                       key={f.id}
-                      onClick={() => { setAdding(false); setSelectedFieldId(f.id); }}
+                      onClick={() => setSelectedFieldId(f.id)}
                       className={clsx('cursor-pointer border-b border-line-soft transition-colors', sel ? 'bg-essa-50/70 ring-1 ring-inset ring-essa-200' : 'hover:bg-canvas')}
                     >
                       <td className="px-4 py-2.5 text-xs text-ink-muted">{i + 1}</td>
@@ -1074,14 +1034,24 @@ function FieldsToCapture(p: TabProps) {
                       <td className="px-2 py-2.5 text-center text-xs font-semibold">{(() => { const m = mappingOf(f); return m ? (m.mandatory ? <span className="text-essa-700">Yes</span> : <span className="text-ink-muted">No</span>) : <span className="text-2xs font-normal text-ink-faint">—</span>; })()}</td>
                       <td className="px-2 py-2.5">{(() => { const m = mappingOf(f); return m ? <StatusBadge value={m.status} /> : <span className="text-2xs text-ink-faint">—</span>; })()}</td>
                       <td className="px-2 py-2.5" onClick={(e) => e.stopPropagation()}>
-                        <button
-                          aria-label={`Remove ${f.label}`}
-                          disabled={!mayEdit}
-                          onClick={() => act('documentFields', 'DELETE', { id: f.id })}
-                          className="rounded border border-line p-1 text-ink-muted hover:bg-semantic-errorBg hover:text-semantic-error disabled:opacity-40"
-                        >
-                          <X size={12} />
-                        </button>
+                        <div className="flex justify-end gap-1">
+                          <button
+                            aria-label={`Edit ${f.label}`}
+                            disabled={!mayEdit}
+                            onClick={() => setDraft({ original: f, label: f.label, hint: hintOf(f) })}
+                            className="rounded border border-line p-1 text-ink-muted hover:bg-essa-50 hover:text-essa-700 disabled:opacity-40"
+                          >
+                            <Pencil size={12} />
+                          </button>
+                          <button
+                            aria-label={`Remove ${f.label}`}
+                            disabled={!mayEdit}
+                            onClick={() => act('documentFields', 'DELETE', { id: f.id })}
+                            className="rounded border border-line p-1 text-ink-muted hover:bg-semantic-errorBg hover:text-semantic-error disabled:opacity-40"
+                          >
+                            <X size={12} />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -1094,79 +1064,103 @@ function FieldsToCapture(p: TabProps) {
 
         {/* right rail — field editor */}
         <aside className="w-full shrink-0 border-t border-line-soft p-4 xl:w-72 xl:border-l xl:border-t-0">
-          {adding ? (
+          {selectedField ? (
             <>
-              <h4 className="text-sm font-semibold text-ink">Untitled field</h4>
+              <h4 className="text-sm font-semibold text-ink">{selectedField.label}</h4>
               <p className="mb-3 text-2xs text-ink-muted">{dt.name} · {category.name}</p>
-              <div className="space-y-3">
-                <Field label="Field name" hint="The name shown on screen and in the extracted values">
-                  <Input value={draft.label} placeholder="e.g. Invoice Number" onChange={(e) => setDraft((d) => ({ ...d, label: e.target.value, fieldCode: d.fieldCode || e.target.value.trim().toUpperCase().replace(/[^A-Z0-9]+/g, '_') }))} />
-                </Field>
-                <Field label="Keyword in document" hint="The wording to look for on the page — separate alternatives with a comma">
-                  <Input value={draft.hint} placeholder="e.g. invoice no, bill number, tax invoice no" onChange={(e) => setDraft((d) => ({ ...d, hint: e.target.value }))} />
-                </Field>
-                <div className="flex gap-2">
-                  <Button
-                    className="flex-1"
-                    disabled={!mayEdit || !draft.label.trim() || !draft.fieldCode.trim()}
-                    onClick={() => {
-                      act('documentFields', 'CREATE', {
-                        categoryId,
-                        documentTypeId: catDoc.documentTypeId,
-                        fieldCode: draft.fieldCode.trim(),
-                        label: draft.label.trim(),
-                        dataType: 'TEXT',
-                        mandatory: false,
-                        extractionRequired: true,
-                        confidenceThreshold: 0.7,
-                        manualEditAllowed: true,
-                        displayOrder: fields.length + 1,
-                        sapMapped: false,
-                        active: true,
-                        configVersionId: 'cfg-1',
-                      });
-                      if (draft.hint) setFieldHints((m) => ({ ...m, [`${catDoc.documentTypeId}:${draft.fieldCode}`]: draft.hint }));
-                      setAdding(false);
-                    }}
-                  >
-                    <Save size={12} /> Save field
-                  </Button>
-                  <Button variant="ghost" onClick={() => setAdding(false)}>Cancel</Button>
-                </div>
-              </div>
+              <RailField label="Keyword in document" value={hintOf(selectedField) || 'Not set'} />
+              <RailField label="Match type" value={mappingOf(selectedField)?.matchType.replace(/_/g, ' ') ?? 'Not compared'} />
+              <RailField label="Tolerance / rule" value={mappingOf(selectedField)?.toleranceRule ?? 'None'} />
+              <RailField label="Mandatory" value={mappingOf(selectedField)?.mandatory ? 'Yes' : 'No'} />
+              {mayEdit && (
+                <Button variant="secondary" size="sm" className="w-full" onClick={() => setDraft({ original: selectedField, label: selectedField.label, hint: hintOf(selectedField) })}>
+                  <Pencil size={13} /> Edit field
+                </Button>
+              )}
             </>
-          ) : selectedField ? (
-            <FieldEditor
-              key={selectedField.id}
-              field={selectedField}
-              docName={dt.name}
-              categoryName={category.name}
-              hint={hintOf(selectedField)}
-              mayEdit={mayEdit}
-              onHint={(h) => setFieldHints((m) => ({ ...m, [selectedField.id]: h }))}
-              onSave={(row) => act('documentFields', 'UPDATE', row)}
-              onRemove={() => { act('documentFields', 'DELETE', { id: selectedField.id }); setSelectedFieldId(''); }}
-            />
           ) : (
             <>
               <h4 className="text-sm font-semibold text-ink">{dt.name}</h4>
               <p className="mb-3 text-2xs text-ink-muted">{category.name}</p>
-              <div className="mb-3">
-                <p className="mb-1 text-2xs font-semibold uppercase tracking-wide text-ink-muted">Required for extraction</p>
-                <div className="flex items-start gap-2">
-                  <Toggle checked={required} disabled={!mayEdit} onChange={(v) => act('categoryDocuments', 'UPDATE', { ...catDoc, requirementType: v ? 'MANDATORY' : 'OPTIONAL' })} label="Required for extraction" />
-                  <p className="text-2xs text-ink-secondary">{required ? 'Required — upload is blocked if this document is absent' : 'Optional — extraction continues if this document is absent'}</p>
-                </div>
-                <p className="mt-1 text-2xs text-ink-muted">Applies to this invoice type only. Toggle this on for documents that must be in the upload before Fields to Capture can run.</p>
-              </div>
-              <p className="mb-3 text-2xs text-ink-secondary">{fields.length} fields configured for this document. Click a row in the table to edit one.</p>
+              <RailField label="Required for extraction" value={required ? 'Required' : 'Optional'} />
+              <p className="mb-3 text-2xs text-ink-muted">
+                {required
+                  ? 'Extraction blocks if this document is absent from the upload.'
+                  : 'Extraction continues if this document is absent from the upload.'}
+              </p>
+              <p className="mb-3 text-2xs text-ink-secondary">{fields.length} fields configured for this document. Select a row to see it, or use the pencil to change it.</p>
               <Link to="?tab=documents" className="block rounded-md border border-line px-3 py-2 text-center text-xs font-medium text-ink-secondary hover:bg-canvas">
-                Edit classification &amp; split settings →
+                Classification &amp; split settings →
               </Link>
             </>
           )}
         </aside>
       </div>
+
+      <Modal
+        open={Boolean(draft)}
+        onClose={() => setDraft(null)}
+        title={draft?.original ? `Edit field — ${draft.original.label}` : `Add field — ${dt.name}`}
+        wide
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setDraft(null)}>Cancel</Button>
+            <Button
+              disabled={!mayEdit || !draft?.label.trim()}
+              onClick={() => {
+                if (!draft) return;
+                const label = draft.label.trim();
+                if (draft.original) {
+                  if (label !== draft.original.label) act('documentFields', 'UPDATE', { ...draft.original, label });
+                  setFieldHints((m) => ({ ...m, [draft.original!.id]: draft.hint }));
+                } else {
+                  // The internal key is derived from the name — administrators
+                  // name fields, they do not write keys (review, 24 Aug).
+                  const fieldCode = label.toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_|_$/g, '');
+                  act('documentFields', 'CREATE', {
+                    categoryId,
+                    documentTypeId: catDoc.documentTypeId,
+                    fieldCode,
+                    label,
+                    dataType: 'TEXT',
+                    mandatory: false,
+                    extractionRequired: true,
+                    confidenceThreshold: 0.7,
+                    manualEditAllowed: true,
+                    displayOrder: fields.length + 1,
+                    sapMapped: false,
+                    active: true,
+                    configVersionId: 'cfg-1',
+                  });
+                  if (draft.hint) setFieldHints((m) => ({ ...m, [`${catDoc.documentTypeId}:${fieldCode}`]: draft.hint }));
+                }
+                setDraft(null);
+              }}
+            >
+              {draft?.original ? 'Save field' : 'Add field'}
+            </Button>
+          </>
+        }
+      >
+        {draft && (
+          <div className="space-y-3">
+            <Field label="Field name" required hint="The name shown on screen and in the extracted values">
+              <Input value={draft.label} placeholder="e.g. Invoice Number" onChange={(e) => setDraft((d) => d && ({ ...d, label: e.target.value }))} />
+            </Field>
+            <Field label="Keyword in document" hint="The wording to look for on the page — separate alternatives with a comma">
+              <Input value={draft.hint} placeholder="e.g. invoice no, bill number, tax invoice no" onChange={(e) => setDraft((d) => d && ({ ...d, hint: e.target.value }))} />
+            </Field>
+            {draft.original && (
+              <button
+                onClick={() => { act('documentFields', 'DELETE', { id: draft.original!.id }); setSelectedFieldId(''); setDraft(null); }}
+                className="w-full rounded-md border border-red-200 py-2 text-xs font-medium text-semantic-error hover:bg-semantic-errorBg"
+              >
+                Remove this field
+              </button>
+            )}
+          </div>
+        )}
+      </Modal>
 
       {/* UI/UX review: the generated extraction prompt is a development
           artefact and is not shown to administrators. */}
@@ -1175,64 +1169,6 @@ function FieldsToCapture(p: TabProps) {
 }
 
 /** Right-rail editor for one capture field — buffered, saves on demand. */
-function FieldEditor({
-  field, docName, categoryName, hint, mayEdit, onHint, onSave, onRemove,
-}: {
-  field: DocField;
-  docName: string;
-  categoryName: string;
-  hint: string;
-  mayEdit: boolean;
-  onHint: (h: string) => void;
-  onSave: (row: Record<string, unknown>) => void;
-  onRemove: () => void;
-}) {
-  const [label, setLabel] = useState(field.label);
-  const [code, setCode] = useState(field.fieldCode);
-  const [h, setH] = useState(hint);
-  const dirty = label !== field.label || code !== field.fieldCode || h !== hint;
-  return (
-    <>
-      <h4 className="text-sm font-semibold text-ink">{field.label}</h4>
-      <p className="mb-3 text-2xs text-ink-muted">{docName} · {categoryName}</p>
-      <div className="space-y-3">
-        <Field label="Display name">
-          <Input value={label} disabled={!mayEdit} onChange={(e) => setLabel(e.target.value)} />
-        </Field>
-        <Field label="Field name (key)">
-          <Input value={code} disabled={!mayEdit} className="font-mono" onChange={(e) => setCode(e.target.value.replace(/\s+/g, ''))} />
-        </Field>
-        <Field label="Hint">
-          <Input value={h} disabled={!mayEdit} onChange={(e) => setH(e.target.value)} />
-        </Field>
-        <div className="rounded-md border border-line bg-canvas p-2.5">
-          <p className="mb-1 text-2xs font-semibold uppercase tracking-wide text-ink-muted">Appears in generated prompt as</p>
-          <p className="break-words font-mono text-2xs text-ink-secondary">- {code}  // {h}</p>
-        </div>
-        {dirty && (
-          <Button
-            className="w-full"
-            disabled={!mayEdit || !label.trim() || !code.trim()}
-            onClick={() => {
-              if (label !== field.label || code !== field.fieldCode) onSave({ ...field, label: label.trim(), fieldCode: code.trim() });
-              if (h !== hint) onHint(h);
-            }}
-          >
-            <Save size={12} /> Save changes
-          </Button>
-        )}
-        <button
-          disabled={!mayEdit}
-          onClick={onRemove}
-          className="w-full rounded-md border border-red-200 py-2 text-xs font-medium text-semantic-error hover:bg-semantic-errorBg disabled:opacity-50"
-        >
-          Remove this field
-        </button>
-      </div>
-    </>
-  );
-}
-
 // ------------------------------------------------------ Validation Rules
 
 interface RuleRowVm {
@@ -1248,8 +1184,8 @@ interface RuleRowVm {
   workflowImpact: string;
 }
 
-function RulesGrid(p: TabProps & { versions: VersionRow[]; versionId: string; onVersionChange: (v: string) => void; onSaveConfiguration: () => void }) {
-  const { bundle, mayEdit, act, docType, catDocs, versions, versionId, onVersionChange, onSaveConfiguration } = p;
+function RulesGrid(p: TabProps) {
+  const { bundle, mayEdit, act, docType, catDocs } = p;
   const [catFilter, setCatFilter] = useState('');
   const [selectedId, setSelectedId] = useState('');
   const [addOpen, setAddOpen] = useState(false);
@@ -1291,14 +1227,9 @@ function RulesGrid(p: TabProps & { versions: VersionRow[]; versionId: string; on
             {cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </Select>
         </Field>
-        <Field label="Version">
-          <Select value={versionId} onChange={(e) => onVersionChange(e.target.value)} className="w-44">
-            {versions.map((v) => <option key={v.id} value={v.id}>{v.versionNo} ({titleCase(v.status)})</option>)}
-          </Select>
-        </Field>
         <div className="ml-auto flex gap-2">
-          <Button variant="secondary" size="sm" disabled={!mayEdit} onClick={() => setAddOpen(true)}><Plus size={13} /> Add Rule</Button>
-          <Button size="sm" disabled={!mayEdit} onClick={onSaveConfiguration}><Save size={13} /> Save Configuration</Button>
+          {/* Changes save as they are made, so there is no separate Save step. */}
+          <Button size="sm" disabled={!mayEdit} onClick={() => setAddOpen(true)}><Plus size={13} /> Add rule</Button>
         </div>
       </div>
 

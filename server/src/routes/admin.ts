@@ -228,6 +228,53 @@ adminRouter.get('/users', authorize('USER_ADMIN'), asyncHandler((_req, res) => {
   });
 }));
 
+/**
+ * Add a portal user.
+ *
+ * People sign in with their ESSA corporate account, so this does not create a
+ * credential — it registers the corporate identity with the platform and gives
+ * it the roles it should hold. Until an administrator does this, a colleague
+ * who signs in has no access to anything.
+ */
+adminRouter.post('/users', authorize('USER_ADMIN'), asyncHandler((req, res) => {
+  const actor = requireAuth(req);
+  const db = getDb();
+  const { name, email, title, roleIds, enabled } = req.body as {
+    name?: string; email?: string; title?: string; roleIds?: string[]; enabled?: boolean;
+  };
+  if (!name?.trim()) throw Errors.validation('A name is required');
+  const normEmail = String(email ?? '').trim().toLowerCase();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(normEmail)) throw Errors.validation('A valid corporate email address is required');
+  if (db.users.some((u) => u.email.toLowerCase() === normEmail)) {
+    throw Errors.conflict('Someone with that email address already has access to this platform');
+  }
+  const roles = Array.isArray(roleIds) ? roleIds : [];
+  if (roles.some((r) => !db.roles.some((x) => x.id === r))) throw Errors.badRequest('Unknown role in assignment');
+
+  const user = {
+    id: ids.generic('USR'),
+    entraObjectId: `entra-${normEmail.replace(/[^a-z0-9]+/g, '-')}`,
+    name: name.trim(),
+    email: normEmail,
+    title: title?.trim() || 'Portal user',
+    roleIds: roles,
+    groups: [] as string[],
+    enabled: enabled !== false,
+  };
+  db.users.push(user);
+  markDirty();
+  const roleNames = db.roles.filter((r) => roles.includes(r.id)).map((r) => r.name).join(', ') || 'None';
+  audit({
+    actorType: 'USER', actorId: actor.id, actorName: actor.name,
+    eventType: 'USER_ADDED', category: 'ACCESS', action: 'CREATE', module: 'identity-access',
+    entityType: 'USER', entityId: user.id, entityRef: user.name,
+    result: 'SUCCESS', reason: 'Portal access granted',
+    newValue: { Name: user.name, Email: user.email, 'Job title': user.title, Roles: roleNames, Status: user.enabled ? 'Active' : 'Inactive' },
+    correlationId: req.ctx.correlationId, source: 'PORTAL',
+  });
+  res.status(201).json({ user });
+}));
+
 adminRouter.post('/users/:id', authorize('USER_ADMIN'), asyncHandler((req, res) => {
   const actor = requireAuth(req);
   const db = getDb();

@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Database, RefreshCcw } from 'lucide-react';
 import { api, ApiError, qs } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
-import { fmtDate, fmtDateTime, fmtMoney, fmtRelative, titleCase } from '@/lib/format';
+import { fmtDate, fmtDateTime, fmtMoney, titleCase } from '@/lib/format';
 import { Badge, Button, Card, DataTable, Input, KeyValue, LoadingState, PageHeader, Select, StatusBadge, Tabs, useToast, type Column } from '@/components/ui';
 
 interface SapData {
@@ -79,7 +79,7 @@ export default function SapIntegrationPage() {
         <Card>
           <p className="text-2xs font-medium uppercase text-ink-muted">Reference Data</p>
           <div className="mt-1"><StatusBadge value={data.health.referenceDataStale ? 'DEGRADED' : 'CONNECTED'} label={data.health.referenceDataStale ? 'STALE' : 'FRESH'} /></div>
-          <p className="mt-1 text-2xs text-ink-muted">Synced {fmtRelative(data.health.referenceDataSyncedAt)}</p>
+          <p className="mt-1 text-2xs text-ink-muted">Synced {fmtDateTime(data.health.referenceDataSyncedAt)}</p>
         </Card>
         <Card>
           <p className="text-2xs font-medium uppercase text-ink-muted">Queued for SAP</p>
@@ -161,7 +161,6 @@ function ReferenceBrowser() {
           columns={[
             { key: 'poNumber', header: 'PO Number', render: (r) => <span className="font-medium">{String(r.poNumber)}</span> },
             { key: 'vendorName', header: 'Vendor', render: (r) => <span className="block max-w-48 truncate text-xs">{String(r.vendorName)}</span> },
-            { key: 'department', header: 'Department', render: (r) => <span className="text-xs">{String(r.department)}</span> },
             { key: 'poType', header: 'Type', render: (r) => <Badge tone="neutral">{String(r.poType)}</Badge> },
             { key: 'totalAmount', header: 'Value', align: 'right', render: (r) => fmtMoney(Number(r.totalAmount)) },
             { key: 'openAmount', header: 'Open', align: 'right', render: (r) => <span className="font-medium">{fmtMoney(Number(r.openAmount))}</span> },

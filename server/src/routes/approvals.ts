@@ -7,6 +7,13 @@ import { nowIso } from '../core/ids';
 
 export const approvalRouter = Router();
 
+/**
+ * Workflow definitions that are not surfaced in the UI for any persona.
+ * They stay in the store so existing routing/fallback behaviour is unaffected;
+ * they are simply not returned to the approval-matrix and workflow config views.
+ */
+const HIDDEN_WORKFLOW_CODES = ['WF-PO-STD'];
+
 approvalRouter.get('/approvals', authorize('APPROVAL_VIEW'), asyncHandler((req, res) => {
   const db = getDb();
   const scope = String(req.query.scope ?? 'mine');
@@ -29,10 +36,18 @@ approvalRouter.get('/approvals', authorize('APPROVAL_VIEW'), asyncHandler((req, 
       vendorName: inv?.vendorName,
       amount: inv?.amount,
       currency: inv?.currency,
-      department: inv?.department,
       categoryName: db.categories.find((c) => c.id === inv?.categoryId)?.name,
-      priority: inv?.priority,
-      overdue: Boolean(s.dueAt && s.dueAt < nowIso()),
+      // The approval list shows the invoice's own status in the shared status
+      // vocabulary (UI/UX review §9/§14), so these travel with the row.
+      lifecycle: inv?.lifecycle,
+      stage: inv?.stage,
+      processingFlag: inv?.processingFlag ?? null,
+      poNumber: inv?.poNumber,
+      // One SLA clock per invoice (ESSA EAPA SLA Matrix): the approval queue
+      // shows the invoice's own SLA due date rather than a second, separate
+      // workflow-step timer that could disagree with it.
+      dueAt: inv?.slaDueAt || s.dueAt,
+      overdue: inv ? Boolean(inv.slaBreached) : Boolean(s.dueAt && s.dueAt < nowIso()),
     };
   };
   res.json({ queue: steps.map(decorate), history: history.map(decorate) });
@@ -62,7 +77,13 @@ approvalRouter.post('/approvals/:stepId/action', authorize('APPROVAL_ACT'), asyn
   res.json({ ok: true, step });
 }));
 
-approvalRouter.get('/approval-matrix', authorize('APPROVAL_VIEW'), asyncHandler((_req, res) => {
+// The approval hierarchy is configuration, maintained from Administration →
+// Workflows & Approval Hierarchy, so it is gated on CONFIG_VIEW rather than on
+// the permission to act on an approval (review, 24 Aug: roles stay separate).
+approvalRouter.get('/approval-matrix', authorize('CONFIG_VIEW'), asyncHandler((_req, res) => {
   const db = getDb();
-  res.json({ doa: db.doaMatrix, workflows: db.workflowDefinitions });
+  res.json({
+    doa: db.doaMatrix,
+    workflows: db.workflowDefinitions.filter((w) => !HIDDEN_WORKFLOW_CODES.includes(w.code)),
+  });
 }));

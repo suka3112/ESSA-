@@ -4,6 +4,8 @@ import { asyncHandler, authorize, pageParams, paginate, requireAuth, sortItems }
 import { Errors } from '../core/errors';
 import { audit } from '../core/audit';
 import { ids, nowIso } from '../core/ids';
+import { currentStatus } from '../core/status';
+import { SLA_STAGE_LABEL, slaStageFor } from '../core/sla';
 import { enqueueJob } from '../core/jobs';
 import {
   buildValidationContext,
@@ -40,11 +42,10 @@ invoiceRouter.get('/invoices', authorize('INVOICE_VIEW'), asyncHandler((req, res
   eq('stage', (i) => i.stage);
   eq('categoryId', (i) => i.categoryId);
   eq('vendorCode', (i) => i.vendorCode);
-  eq('department', (i) => i.department);
   eq('source', (i) => i.source);
   eq('assignedTo', (i) => i.assignedTo);
   eq('processingFlag', (i) => i.processingFlag ?? undefined);
-  if (q.slaBreached === 'true') items = items.filter((i) => i.slaBreached || (i.slaDueAt < nowIso() && !['POSTED', 'PAID'].includes(i.lifecycle)));
+  if (q.slaBreached === 'true') items = items.filter((i) => i.slaBreached);
   if (q.hasExceptions === 'true') {
     const withOpen = new Set(db.exceptions.filter((e) => ['OPEN', 'ASSIGNED', 'IN_PROGRESS', 'WAITING'].includes(e.status)).map((e) => e.invoiceId));
     items = items.filter((i) => withOpen.has(i.id));
@@ -56,18 +57,65 @@ invoiceRouter.get('/invoices', authorize('INVOICE_VIEW'), asyncHandler((req, res
   if (q.dateFrom) items = items.filter((i) => i.invoiceDate >= String(q.dateFrom));
   if (q.dateTo) items = items.filter((i) => i.invoiceDate <= String(q.dateTo));
 
+  // ---- Current Status filter (UI/UX review §5): the workbench filters by the
+  // same status vocabulary the table displays, so what the user picks in the
+  // Status column filter is exactly what appears in the Current Status column.
+  if (q.status || q.statusIn) {
+    const wanted = new Set(
+      String(q.statusIn ?? q.status)
+        .split(',')
+        .map((v) => v.trim())
+        .filter(Boolean)
+    );
+    const openByInvoice = new Map<string, number>();
+    db.exceptions
+      .filter((e) => ['OPEN', 'ASSIGNED', 'IN_PROGRESS', 'WAITING'].includes(e.status))
+      .forEach((e) => openByInvoice.set(e.invoiceId, (openByInvoice.get(e.invoiceId) ?? 0) + 1));
+    items = items.filter((i) => wanted.has(currentStatus(i, openByInvoice.get(i.id) ?? 0)));
+  }
+
+  // ---- PO vs Non-PO workbench tabs (driven by the invoice category's poBased flag)
+  const poBasedCategoryIds = new Set(db.categories.filter((c) => c.poBased).map((c) => c.id));
+  const isPoBased = (i: (typeof items)[0]) => poBasedCategoryIds.has(i.categoryId);
+  // Counts reflect every other active filter, so the tab badges stay in sync with the current view.
+  const poTypeCounts = {
+    ALL: items.length,
+    PO: items.filter(isPoBased).length,
+    NON_PO: items.filter((i) => !isPoBased(i)).length,
+  };
+  const poType = String(q.poType ?? '').toUpperCase();
+  if (poType === 'PO') items = items.filter(isPoBased);
+  else if (poType === 'NON_PO') items = items.filter((i) => !isPoBased(i));
+
   const p = pageParams(req, 'receivedAt');
   items = sortItems(items, p.sortBy, p.sortDir);
   const page = paginate(items, p);
   const openExc = db.exceptions.filter((e) => ['OPEN', 'ASSIGNED', 'IN_PROGRESS', 'WAITING'].includes(e.status));
   res.json({
     ...page,
-    items: page.items.map((i) => ({
-      ...i,
-      categoryName: db.categories.find((c) => c.id === i.categoryId)?.name ?? i.categoryId,
-      openExceptions: openExc.filter((e) => e.invoiceId === i.id).length,
-      assignedToName: db.users.find((u) => u.id === i.assignedTo)?.name,
-    })),
+    poTypeCounts,
+    items: page.items.map((i) => {
+      // Validation summary for the workbench "Validation X/Y" column: counts
+      // from the latest validation run (overridden checks count as passed).
+      const latestRun = db.validationRuns
+        .filter((r) => r.invoiceId === i.id)
+        .sort((a, b) => b.startedAt.localeCompare(a.startedAt))[0];
+      const results = latestRun ? db.validationResults.filter((r) => r.runId === latestRun.id) : [];
+      return {
+        ...i,
+        categoryName: db.categories.find((c) => c.id === i.categoryId)?.name ?? i.categoryId,
+        openExceptions: openExc.filter((e) => e.invoiceId === i.id).length,
+        assignedToName: db.users.find((u) => u.id === i.assignedTo)?.name,
+        checksTotal: results.length,
+        checksPassed: results.filter((r) => ['PASS', 'OVERRIDDEN', 'SKIPPED', 'WARNING'].includes(r.result)).length,
+        checksFailed: results.filter((r) => ['FAIL', 'HARD_FAIL'].includes(r.result)).length,
+        slaStage: slaStageFor(i, openExc.filter((e) => e.invoiceId === i.id).length),
+        slaStageLabel: (() => {
+          const st = slaStageFor(i, openExc.filter((e) => e.invoiceId === i.id).length);
+          return st ? SLA_STAGE_LABEL[st] : null;
+        })(),
+      };
+    }),
   });
 }));
 
@@ -76,7 +124,7 @@ invoiceRouter.post('/invoices/upload', authorize('INVOICE_UPLOAD'), asyncHandler
   const user = requireAuth(req);
   const body = req.body as {
     vendorCode?: string; categoryId?: string; amount?: number; poNumber?: string;
-    department?: string; description?: string; invoiceDate?: string;
+    description?: string; invoiceDate?: string;
     files?: { fileName: string; documentTypeId: string; sizeKb?: number }[];
   };
   if (!body.vendorCode || !body.categoryId || !body.amount || !body.files?.length) {
@@ -92,7 +140,6 @@ invoiceRouter.post('/invoices/upload', authorize('INVOICE_UPLOAD'), asyncHandler
       categoryId: body.categoryId,
       amount: body.amount,
       poNumber: body.poNumber || undefined,
-      department: body.department,
       description: body.description,
       invoiceDate: body.invoiceDate,
       fileNames: body.files.map((f) => ({ fileName: f.fileName, documentTypeId: f.documentTypeId, sizeKb: f.sizeKb })),
@@ -121,6 +168,12 @@ invoiceRouter.get('/invoices/:id', authorize('INVOICE_VIEW'), asyncHandler((req,
       ...invoice,
       categoryName: db.categories.find((c) => c.id === invoice.categoryId)?.name,
       assignedToName: db.users.find((u) => u.id === invoice.assignedTo)?.name,
+      // The status vocabulary needs the open-exception count to say whether the
+      // invoice is running checks or waiting on someone to resolve one, so it
+      // travels with the detail record exactly as it does with a list row.
+      openExceptions: db.exceptions.filter(
+        (e) => e.invoiceId === invoice.id && ['OPEN', 'ASSIGNED', 'IN_PROGRESS', 'WAITING'].includes(e.status)
+      ).length,
     },
     vendor: db.vendors.find((v) => v.code === invoice.vendorCode),
     vendorControl: db.vendorControls.find((c) => c.vendorCode === invoice.vendorCode),
@@ -173,7 +226,7 @@ invoiceRouter.post('/invoices/:id/assign', authorize('INVOICE_EDIT'), asyncHandl
   audit({
     actorType: 'USER', actorId: user.id, actorName: user.name,
     eventType: 'INVOICE_ASSIGNED', category: 'INVOICE', action: 'ASSIGN', module: 'invoice',
-    entityType: 'Invoice', entityId: invoice.id, entityRef: invoice.invoiceNumber, invoiceId: invoice.id,
+    entityType: 'INVOICE', entityId: invoice.id, entityRef: invoice.invoiceNumber, invoiceId: invoice.id,
     result: 'SUCCESS', oldValue: { assignedTo: old }, newValue: { assignedTo: assignee?.id },
     correlationId: req.ctx.correlationId, source: 'PORTAL',
   });
@@ -260,10 +313,15 @@ invoiceRouter.post('/invoices/:id/documents', authorize('INVOICE_EDIT'), asyncHa
   markDirty();
   audit({
     actorType: 'USER', actorId: user.id, actorName: user.name,
-    eventType: replaceDocumentId ? 'DOCUMENT_REPLACED' : 'DOCUMENT_UPLOADED',
+    eventType: replaceDocumentId ? 'DOCUMENT_REPLACED' : 'DOCUMENT_UPLOAD',
     category: 'DOCUMENT', action: replaceDocumentId ? 'REPLACE' : 'UPLOAD', module: 'document',
-    entityType: 'InvoiceDocument', entityId: doc.id, entityRef: fileName, invoiceId: invoice.id,
+    entityType: 'DOCUMENT', entityId: doc.id, entityRef: fileName, invoiceId: invoice.id,
     result: 'SUCCESS', correlationId: invoice.correlationId, source: 'PORTAL',
+    details: [
+      { label: 'Invoice', value: invoice.invoiceNumber },
+      { label: 'Document type', value: db.documentTypes.find((t) => t.id === doc.documentTypeId)?.name ?? '—' },
+      { label: 'File', value: fileName },
+    ],
   });
   addTimeline(invoice.id, replaceDocumentId ? 'DOCUMENT_REPLACED' : 'DOCUMENT_ADDED',
     `${replaceDocumentId ? 'Replacement' : 'Additional'} document: ${fileName}`, {
@@ -315,12 +373,30 @@ invoiceRouter.post('/fields/:fieldId/correct', authorize('FIELD_CORRECT'), async
   field.confidenceBand = 'HIGH';
   field.confidence = 1;
   markDirty();
+  // The Audit Log records the correction against the INVOICE, with the field
+  // and its before/after values in the expanded record (design reference,
+  // 24 Aug — "I have to see the proper value... which field is this?").
+  // Values are written the way the field is read on screen, so an amount shows
+  // as IDR 1,000,000 rather than as the raw 1000000.
+  const asShown = (raw: string): string => {
+    if (field.dataType === 'CURRENCY' || field.dataType === 'NUMBER') {
+      const n = Number(String(raw).replace(/[^0-9.-]/g, ''));
+      if (!Number.isNaN(n) && String(raw).trim() !== '') {
+        const formatted = n.toLocaleString('en-US', { maximumFractionDigits: 2 });
+        return field.dataType === 'CURRENCY' ? `${invoice.currency} ${formatted}` : formatted;
+      }
+    }
+    return raw || '—';
+  };
   audit({
     actorType: 'USER', actorId: user.id, actorName: user.name,
-    eventType: 'FIELD_VALUE_CHANGED', category: 'EXTRACTION', action: 'CORRECT', module: 'extraction',
-    entityType: 'ExtractedField', entityId: field.id, entityRef: `${field.label} (${invoice.invoiceNumber})`,
+    eventType: 'CORRECT', category: 'EXTRACTION', action: 'CORRECT', module: 'extraction',
+    entityType: 'INVOICE', entityId: invoice.id, entityRef: invoice.invoiceNumber,
     invoiceId: invoice.id, result: 'SUCCESS', reason,
-    oldValue: { value: previous }, newValue: { value },
+    oldValue: { [field.label]: asShown(previous) }, newValue: { [field.label]: asShown(value) },
+    details: [
+      { label: 'Document', value: getDb().documentTypes.find((d) => d.id === field.documentTypeId)?.name ?? 'Document' },
+    ],
     correlationId: invoice.correlationId, source: 'PORTAL',
   });
   addTimeline(invoice.id, 'FIELD_CORRECTED', `Field corrected: ${field.label}`, {
@@ -342,9 +418,11 @@ invoiceRouter.post('/fields/:fieldId/accept', authorize('FIELD_CORRECT'), asyncH
   audit({
     actorType: 'USER', actorId: user.id, actorName: user.name,
     eventType: 'FIELD_VALUE_ACCEPTED', category: 'EXTRACTION', action: 'ACCEPT', module: 'extraction',
-    entityType: 'ExtractedField', entityId: field.id, entityRef: `${field.label} (${invoice.invoiceNumber})`,
+    entityType: 'INVOICE', entityId: invoice.id, entityRef: invoice.invoiceNumber,
     invoiceId: invoice.id, result: 'SUCCESS',
-    newValue: { value: field.value }, correlationId: invoice.correlationId, source: 'PORTAL',
+    newValue: { [field.label]: field.value },
+    details: [{ label: 'Field', value: field.label }],
+    correlationId: invoice.correlationId, source: 'PORTAL',
   });
   res.json({ field });
 }));
@@ -398,7 +476,7 @@ invoiceRouter.post('/validation-results/:id/override', authorize('VALIDATION_OVE
   audit({
     actorType: 'USER', actorId: user.id, actorName: user.name, actorRole: req.ctx.roles.map((r) => r.code).join(','),
     eventType: 'VALIDATION_OVERRIDDEN', category: 'VALIDATION', action: 'OVERRIDE', module: 'rule-engine',
-    entityType: 'ValidationResult', entityId: result.id, entityRef: `${result.ruleCode} (${invoice.invoiceNumber})`,
+    entityType: 'VALIDATION', entityId: result.id, entityRef: `${result.ruleCode} (${invoice.invoiceNumber})`,
     invoiceId: invoice.id, result: 'OVERRIDDEN', reason,
     oldValue: { result: previous }, newValue: { result: 'OVERRIDDEN' },
     correlationId: invoice.correlationId, source: 'PORTAL',

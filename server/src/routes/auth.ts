@@ -23,7 +23,6 @@ authRouter.get('/auth/directory', asyncHandler((req, res) => {
       name: u.name,
       email: u.email,
       title: u.title,
-      department: u.department,
       enabled: u.enabled,
       roles: db.roles.filter((r) => u.roleIds.includes(r.id)).map((r) => r.name),
     }))
@@ -39,7 +38,7 @@ authRouter.post('/auth/login', asyncHandler((req, res) => {
     audit({
       actorType: 'USER', actorId: user.id, actorName: user.name,
       eventType: 'LOGIN_FAILED', category: 'AUTHENTICATION', action: 'LOGIN', module: 'identity-access',
-      entityType: 'Session', entityId: ids.generic('SES'), result: 'DENIED',
+      entityType: 'SESSION', entityId: ids.generic('SES'), entityRef: user.name, result: 'DENIED',
       reason: 'Portal user is disabled', correlationId: req.ctx.correlationId, source: 'ENTRA_SSO',
     });
     throw Errors.forbidden('sign in - this portal user is disabled');
@@ -49,7 +48,7 @@ authRouter.post('/auth/login', asyncHandler((req, res) => {
   audit({
     actorType: 'USER', actorId: user.id, actorName: user.name, actorRole: user.title,
     eventType: 'LOGIN_SUCCESS', category: 'AUTHENTICATION', action: 'LOGIN', module: 'identity-access',
-    entityType: 'Session', entityId: ids.generic('SES'), result: 'SUCCESS',
+    entityType: 'SESSION', entityId: ids.generic('SES'), entityRef: user.name, result: 'SUCCESS',
     correlationId: req.ctx.correlationId, source: 'ENTRA_SSO',
   });
   const { permissions, roles } = resolvePermissions(user);
@@ -67,14 +66,14 @@ authRouter.post('/auth/login', asyncHandler((req, res) => {
  */
 const V1_ROLE_TO_V2_ROLE: Record<string, { roleId: string; title: string }> = {
   '5': { roleId: 'role-ap-processor', title: 'AP Processor (V1: AP Team)' },
-  '6': { roleId: 'role-ap-reviewer', title: 'AP Reviewer (V1: AP Supervisor)' },
-  '14': { roleId: 'role-ap-approver', title: 'AP Approver (V1: AP Lead)' },
-  '15': { roleId: 'role-ap-manager', title: 'AP Manager (V1: Finance Manager)' },
-  '16': { roleId: 'role-ap-approver', title: 'AP Approver (V1: Head of Section)' },
-  '17': { roleId: 'role-ap-approver', title: 'AP Approver (V1: Head of Department)' },
-  '18': { roleId: 'role-ap-approver', title: 'AP Approver (V1: Head of Function)' },
-  '19': { roleId: 'role-ap-approver', title: 'AP Approver (V1: Site Head)' },
-  '20': { roleId: 'role-ap-manager', title: 'AP Manager (V1: Group Functional Director)' },
+  '6': { roleId: 'role-ap-reviewer', title: 'AP Supervisor' },
+  '14': { roleId: 'role-ap-reviewer', title: 'AP Supervisor (V1: AP Lead)' },
+  '15': { roleId: 'role-ap-reviewer', title: 'AP Supervisor (V1: Finance Manager)' },
+  '16': { roleId: 'role-ap-reviewer', title: 'AP Supervisor (V1: Head of Section)' },
+  '17': { roleId: 'role-ap-reviewer', title: 'AP Supervisor' },
+  '18': { roleId: 'role-ap-reviewer', title: 'AP Supervisor (V1: Head of Function)' },
+  '19': { roleId: 'role-ap-reviewer', title: 'AP Supervisor (V1: Site Head)' },
+  '20': { roleId: 'role-ap-reviewer', title: 'AP Supervisor (V1: Group Functional Director)' },
   '4': { roleId: 'role-admin', title: 'Administrator' },
   '2': { roleId: 'role-ap-processor', title: 'AP Processor (V1: Finance)' },
 };
@@ -93,7 +92,6 @@ authRouter.post('/auth/v1-handoff', asyncHandler((req, res) => {
       entraObjectId: 'v1-' + normEmail,
       name: name?.trim() || normEmail,
       email: normEmail,
-      department: 'Finance',
       title: mapping.title,
       roleIds: [mapping.roleId],
       groups: ['V1 Portal Users'],
@@ -109,7 +107,7 @@ authRouter.post('/auth/v1-handoff', asyncHandler((req, res) => {
   audit({
     actorType: 'USER', actorId: user.id, actorName: user.name, actorRole: user.title,
     eventType: 'LOGIN_SUCCESS', category: 'AUTHENTICATION', action: 'LOGIN', module: 'identity-access',
-    entityType: 'Session', entityId: ids.generic('SES'), result: 'SUCCESS',
+    entityType: 'SESSION', entityId: ids.generic('SES'), entityRef: user.name, result: 'SUCCESS',
     reason: 'V1 -> V2 version switch (session handoff, no re-authentication)',
     correlationId: req.ctx.correlationId, source: 'V1_SWITCH',
   });
@@ -131,7 +129,7 @@ authRouter.post('/auth/logout', asyncHandler((req, res) => {
     audit({
       actorType: 'USER', actorId: req.ctx.user.id, actorName: req.ctx.user.name,
       eventType: 'LOGOUT', category: 'AUTHENTICATION', action: 'LOGOUT', module: 'identity-access',
-      entityType: 'Session', entityId: ids.generic('SES'), result: 'SUCCESS',
+      entityType: 'SESSION', entityId: ids.generic('SES'), entityRef: req.ctx.user.name, result: 'SUCCESS',
       correlationId: req.ctx.correlationId, source: 'PORTAL',
     });
   }

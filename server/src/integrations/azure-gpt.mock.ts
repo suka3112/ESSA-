@@ -58,13 +58,16 @@ function deriveValue(invoice: Invoice, field: DocumentField, rnd: () => number, 
     case 'INVOICE_DATE': return invoice.invoiceDate;
     case 'VENDOR_CODE': return invoice.vendorCode;
     case 'VENDOR_NAME': return invoice.vendorName;
-    case 'VENDOR_GSTIN': return '27AABCE' + Math.floor(1000 + rnd() * 9000) + 'F1Z' + Math.floor(rnd() * 9);
+    // Indonesian tax id (NPWP) format — the platform runs on ESSA Indonesia.
+    case 'VENDOR_TAX_NUMBER':
+      return `${Math.floor(10 + rnd() * 89)}.${Math.floor(100 + rnd() * 899)}.${Math.floor(100 + rnd() * 899)}.${Math.floor(1 + rnd() * 8)}-${Math.floor(100 + rnd() * 899)}.000`;
     case 'PO_NUMBER': return invoice.poNumber ?? '';
     case 'INVOICE_AMOUNT': return String(invoice.amount);
     case 'INVOICE_SUBTOTAL': return String(invoice.subtotal);
     case 'TAX_AMOUNT': return String(invoice.taxAmount);
     case 'CURRENCY': return invoice.currency;
-    case 'DEPARTMENT': return invoice.department;
+    // Non-PO invoices carry a cost object rather than a PO (BPD §10.4).
+    case 'COST_CENTER': return 'CC-' + Math.floor(1100 + rnd() * 3900);
     case 'DESCRIPTION': return invoice.description;
     case 'GRN_NUMBER': {
       // The document carries the real GRN number - read it from reference data

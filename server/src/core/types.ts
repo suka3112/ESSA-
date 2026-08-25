@@ -49,7 +49,6 @@ export interface AppUser {
   entraObjectId: string;
   name: string;
   email: string;
-  department: string;
   title: string;
   roleIds: string[];
   groups: string[];
@@ -277,12 +276,66 @@ export type ProcessingFlag =
   | 'EXTRACTION_REVIEW'
   | 'VALIDATION_FAILED'
   | 'APPROVAL_PENDING'
+  // UI/UX review (Aug 2026) §14: a rejected invoice is its own business state
+  // and must not be presented as a generic validation failure.
+  | 'REJECTED'
   | 'SAP_PENDING'
   | 'SAP_ERROR'
   | 'TECHNICAL_RETRY'
   | null;
 
 export type IngestSource = 'EMAIL' | 'SHAREPOINT' | 'MANUAL_UPLOAD';
+
+// ---------------------------------------------------------------- SLA model
+/**
+ * SLA stages, from the ESSA EAPA SLA Matrix (BPD v0.1.4 page 13 + §11.3/§11.4).
+ * Each invoice/activity type has its own turnaround target per stage.
+ */
+export type SlaStage = 'INVOICE_CREATION' | 'TAX_REVIEW' | 'AP_APPROVAL' | 'PAYMENT';
+
+export interface SlaRule {
+  id: string;
+  /** Invoice or activity type this target applies to, as named in the SLA matrix. */
+  activityType: string;
+  /** Linked invoice category, when the activity type maps to one. */
+  categoryId?: string;
+  stage: SlaStage;
+  /** Target in working days. Null means the stage does not apply. */
+  days: number | null;
+  /** DEFINED | PROVISIONAL | NOT_APPLICABLE — from the SLA matrix Status column. */
+  confidence: 'DEFINED' | 'PROVISIONAL' | 'NOT_APPLICABLE';
+  note?: string;
+  active: boolean;
+}
+
+/** Reminder and escalation timers (SLA Matrix — Workflow Timers). */
+export interface ReminderRule {
+  id: string;
+  name: string;
+  trigger: string;
+  /** Hours after the trigger. */
+  afterHours: number;
+  recipient: string;
+  action: string;
+  active: boolean;
+}
+
+/**
+ * Exception code catalogue — one code per error type so the same failure always
+ * carries the same code, whatever the invoice, category or vendor.
+ */
+export interface ExceptionCode {
+  /** Equal to the code for the seeded catalogue; generated for codes added later. */
+  id: string;
+  code: string;
+  type: ExceptionType;
+  /** Set for missing-document codes: one code per required document type. */
+  documentTypeId?: string;
+  label: string;
+  description: string;
+  active: boolean;
+}
+
 
 export interface Invoice {
   id: string;
@@ -297,7 +350,6 @@ export interface Invoice {
   taxAmount: number;
   currency: string;
   poNumber?: string;
-  department: string;
   companyCode: string;
   source: IngestSource;
   stage: InvoiceStage;
@@ -531,7 +583,6 @@ export interface WorkflowStepDef {
   approverRef?: string;
   amountThresholdMin?: number;
   amountThresholdMax?: number;
-  department?: string;
   taxStep?: boolean;
   slaHours: number;
   escalationTo?: string;
@@ -592,17 +643,22 @@ export interface WorkflowInstance {
   completedAt?: string;
 }
 
+/**
+ * One approval level inside an amount band — BPD v0.1.4 §11.2 "DoA Approval
+ * Hierarchy". Approval authority is decided by the invoice amount alone;
+ * department is not a concept in this platform (UI/UX review, 24 Aug 2026).
+ */
 export interface DoAEntry {
   id: string;
-  department: string;
   level: number;
+  /** Approval role that owns this level (HOS, HOD, HOF, OSH_STH, GFD). */
   role: string;
-  approverUserId: string;
-  approverName: string;
   minAmount: number;
   maxAmount: number | null;
   currency: string;
   active: boolean;
+  approverUserId?: string;
+  approverName?: string;
 }
 
 // ---------- Vendor ----------
@@ -668,7 +724,6 @@ export interface SapPurchaseOrder {
   vendorCode: string;
   vendorName: string;
   companyCode: string;
-  department: string;
   currency: string;
   totalAmount: number;
   openAmount: number;
@@ -847,10 +902,16 @@ export interface AuditEvent {
   action: string;
   module: string;
   entityType: string;
+  /**
+   * Extra context rendered as label / value rows when the record is expanded —
+   * the things that only make sense for this kind of activity (which document,
+   * which extraction profile, which prompt version).
+   */
+  details?: { label: string; value: string }[];
   entityId: string;
   entityRef?: string;
   invoiceId?: string;
-  result: 'SUCCESS' | 'FAILURE' | 'PASS' | 'FAIL' | 'OVERRIDDEN' | 'DENIED';
+  result: 'SUCCESS' | 'REJECTED' | 'PASS' | 'FAIL' | 'OVERRIDDEN' | 'DENIED';
   reason?: string;
   oldValue?: unknown;
   newValue?: unknown;

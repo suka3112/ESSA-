@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react';
-import { ChevronLeft, ChevronRight, Download, ExternalLink, FileText, RefreshCcw, ZoomIn, ZoomOut } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Download, ExternalLink, RefreshCcw, ZoomIn, ZoomOut } from 'lucide-react';
 import clsx from 'clsx';
-import { fmtDateTime, fmtMoney } from '@/lib/format';
-import { Badge, StatusBadge } from '@/components/ui';
+import { fmtMoney } from '@/lib/format';
+import { StatusBadge } from '@/components/ui';
 import type { DocumentRow, FieldRow, InvoiceDetail } from './types';
 
 /**
@@ -43,53 +43,43 @@ export function DocumentViewer({
 
   return (
     <div className="flex h-full flex-col overflow-hidden rounded-lg border border-line bg-white shadow-card">
-      {/* thumbnails */}
-      <div className="flex gap-1.5 overflow-x-auto border-b border-line-soft p-2 scrollbar-thin">
-        {documents.map((d) => (
-          <button
-            key={d.id}
-            onClick={() => {
-              onSelect(d.id);
-              setPage(1);
-            }}
-            className={clsx(
-              'flex w-24 shrink-0 flex-col items-center gap-1 rounded-md border p-1.5 text-center transition-colors',
-              d.id === doc.id ? 'border-essa-500 bg-essa-50' : 'border-line hover:border-essa-300',
-              d.status === 'SUPERSEDED' && 'opacity-50'
-            )}
-            title={d.fileName}
-          >
-            <span className="flex h-10 w-full items-center justify-center rounded-sm border border-line bg-canvas">
-              <FileText size={16} className={d.id === doc.id ? 'text-essa-600' : 'text-ink-faint'} />
-            </span>
-            <span className="w-full truncate text-2xs font-medium text-ink-secondary">{d.documentType?.name}</span>
-            <StatusBadge value={d.status === 'AVAILABLE' ? d.requirementType : d.status} />
-          </button>
-        ))}
-      </div>
+      {/* Document pills removed (design review) — selection moved to the
+          dropdown beside "+ Add document" on the page above the viewer. */}
 
       {/* toolbar */}
       <div className="flex flex-wrap items-center gap-1 border-b border-line-soft px-2 py-1.5 text-xs">
         <span className="mr-auto flex min-w-0 items-center gap-1.5">
           <span className="truncate font-medium">{doc.fileName}</span>
           <span className="text-2xs text-ink-faint">v{doc.version} · {doc.sizeKb} KB</span>
-          <StatusBadge value={doc.extractionStatus} />
+          {/* UI/UX review: "mandatory / optional" is internal configuration and
+              is not shown to the reader of a document. Only a document that is
+              missing or superseded carries a badge. */}
+          {doc.status !== 'AVAILABLE' && <StatusBadge value={doc.status} />}
         </span>
-        <button aria-label="Zoom out" className="rounded p-1 hover:bg-line-soft" onClick={() => setZoom((z) => Math.max(0.6, z - 0.15))}><ZoomOut size={14} /></button>
-        <span className="w-10 text-center text-2xs text-ink-muted">{Math.round(zoom * 100)}%</span>
-        <button aria-label="Zoom in" className="rounded p-1 hover:bg-line-soft" onClick={() => setZoom((z) => Math.min(1.8, z + 0.15))}><ZoomIn size={14} /></button>
+        {/* Related controls are grouped so each set wraps together as one unit
+            (zoom −/%/+ · prev/page/next · open/download/replace) — fixes the
+            "Page 1 of 5 + arrows split onto the next line" responsive bug. */}
+        <span className="flex flex-nowrap items-center gap-1 whitespace-nowrap">
+          <button aria-label="Zoom out" className="rounded p-1 hover:bg-line-soft" onClick={() => setZoom((z) => Math.max(0.6, z - 0.15))}><ZoomOut size={14} /></button>
+          <span className="w-10 text-center text-2xs text-ink-muted">{Math.round(zoom * 100)}%</span>
+          <button aria-label="Zoom in" className="rounded p-1 hover:bg-line-soft" onClick={() => setZoom((z) => Math.min(1.8, z + 0.15))}><ZoomIn size={14} /></button>
+        </span>
         <span className="mx-1 h-4 w-px bg-line" />
-        <button aria-label="Previous page" className="rounded p-1 hover:bg-line-soft disabled:opacity-40" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}><ChevronLeft size={14} /></button>
-        <span className="text-2xs text-ink-muted">Page {page}/{doc.pages}</span>
-        <button aria-label="Next page" className="rounded p-1 hover:bg-line-soft disabled:opacity-40" disabled={page >= doc.pages} onClick={() => setPage((p) => p + 1)}><ChevronRight size={14} /></button>
+        <span className="flex flex-nowrap items-center gap-1 whitespace-nowrap">
+          <button aria-label="Previous page" className="rounded p-1 hover:bg-line-soft disabled:opacity-40" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}><ChevronLeft size={14} /></button>
+          <span className="text-2xs text-ink-muted">Page {page}/{doc.pages}</span>
+          <button aria-label="Next page" className="rounded p-1 hover:bg-line-soft disabled:opacity-40" disabled={page >= doc.pages} onClick={() => setPage((p) => p + 1)}><ChevronRight size={14} /></button>
+        </span>
         <span className="mx-1 h-4 w-px bg-line" />
-        <a href={doc.sharePointUrl} target="_blank" rel="noreferrer" title="Open in SharePoint" className="rounded p-1 text-ink-secondary hover:bg-line-soft"><ExternalLink size={14} /></a>
-        <button title="Download" className="rounded p-1 text-ink-secondary hover:bg-line-soft"><Download size={14} /></button>
-        {onReplace && (
-          <button title="Replace document" onClick={() => onReplace(doc)} className="rounded p-1 text-ink-secondary hover:bg-line-soft">
-            <RefreshCcw size={14} />
-          </button>
-        )}
+        <span className="flex flex-nowrap items-center gap-1 whitespace-nowrap">
+          <a href={doc.sharePointUrl} target="_blank" rel="noreferrer" title="Open in new tab" className="rounded p-1 text-ink-secondary hover:bg-line-soft"><ExternalLink size={14} /></a>
+          <button title="Download PDF" className="rounded p-1 text-ink-secondary hover:bg-line-soft"><Download size={14} /></button>
+          {onReplace && (
+            <button title="Replace this document" onClick={() => onReplace(doc)} className="rounded p-1 text-ink-secondary hover:bg-line-soft">
+              <RefreshCcw size={14} />
+            </button>
+          )}
+        </span>
       </div>
 
       {/* synthetic page */}
@@ -101,7 +91,7 @@ export function DocumentViewer({
           <div className="flex items-start justify-between border-b-2 border-essa-600 pb-3">
             <div>
               <p className="text-sm font-bold text-ink">{inv.vendorName}</p>
-              <p className="text-2xs text-ink-muted">GSTIN: {detail.vendor?.gstin} · {detail.vendor?.city}</p>
+              <p className="text-2xs text-ink-muted">Tax No. {detail.vendor?.gstin} · {detail.vendor?.city}</p>
             </div>
             <p className="text-right text-2xs text-ink-muted">
               <span className="block text-xs font-bold uppercase text-essa-700">{doc.documentType?.name}</span>
@@ -115,7 +105,7 @@ export function DocumentViewer({
                   ['Invoice No.', inv.invoiceNumber],
                   ['Invoice Date', inv.invoiceDate],
                   ['PO Reference', inv.poNumber ?? '—'],
-                  ['Department', inv.department],
+                  ['Currency', inv.currency],
                 ].map(([l, v]) => (
                   <div key={l as string}>
                     <p className="font-semibold uppercase tracking-wide text-ink-faint">{l}</p>
@@ -134,8 +124,8 @@ export function DocumentViewer({
                   <div key={l.id} className="grid grid-cols-12 gap-1 px-2 py-1.5 text-2xs text-ink">
                     <span className="col-span-6">{l.description}</span>
                     <span className="col-span-2 text-right">{l.quantity} {l.uom}</span>
-                    <span className="col-span-2 text-right">{l.unitPrice.toLocaleString('en-IN')}</span>
-                    <span className="col-span-2 text-right">{l.amount.toLocaleString('en-IN')}</span>
+                    <span className="col-span-2 text-right">{l.unitPrice.toLocaleString('en-US')}</span>
+                    <span className="col-span-2 text-right">{l.amount.toLocaleString('en-US')}</span>
                   </div>
                 ))}
                 <div className="space-y-0.5 border-t border-line px-2 py-1.5 text-right text-2xs">
@@ -179,13 +169,9 @@ export function DocumentViewer({
         </div>
       </div>
 
-      <div className="flex items-center justify-between border-t border-line-soft px-3 py-1.5 text-2xs text-ink-muted">
-        <span>Uploaded by {doc.uploadedBy} · {fmtDateTime(doc.uploadedAt)}</span>
-        <span className="flex items-center gap-2">
-          <Badge tone="neutral">{doc.checkMode.replace(/_/g, ' ')}</Badge>
-          <span className="hidden sm:inline">{doc.checksum.slice(0, 18)}…</span>
-        </span>
-      </div>
+      {/* Footer metadata strip removed (design review): uploader, check-mode
+          badge and checksum added noise without user value — provenance lives
+          in the Timeline tab. */}
     </div>
   );
 }

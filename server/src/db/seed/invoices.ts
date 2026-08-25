@@ -30,7 +30,7 @@ import { addTimeline } from '../../modules/pipeline/helpers';
 
 // -------------------------------------------------------------- SAP helpers
 let poSeq = 4700009500;
-function mkPo(db: Database, vendorCode: string, department: string, subtotal: number, opts: { openFactor?: number; poType?: SapPurchaseOrder['poType'] } = {}): SapPurchaseOrder {
+function mkPo(db: Database, vendorCode: string, subtotal: number, opts: { openFactor?: number; poType?: SapPurchaseOrder['poType'] } = {}): SapPurchaseOrder {
   const vendor = db.vendors.find((v) => v.code === vendorCode)!;
   poSeq += 7;
   const open = Math.round(subtotal * (opts.openFactor ?? 1.15));
@@ -38,9 +38,8 @@ function mkPo(db: Database, vendorCode: string, department: string, subtotal: nu
     poNumber: String(poSeq),
     vendorCode,
     vendorName: vendor.name,
-    companyCode: '1000',
-    department,
-    currency: 'INR',
+    companyCode: 'PAU',
+    currency: 'IDR',
     poType: opts.poType ?? 'SERVICE',
     status: 'OPEN',
     totalAmount: Math.round(open * 1.8),
@@ -93,7 +92,7 @@ function mkSes(db: Database, poNumber: string, amount: number, date: string, des
 
 // -------------------------------------------------------- attendance helper
 let attSeq = 0;
-const EMP_NAMES = ['Ramesh Yadav', 'Sunil Pawar', 'Ganesh Kale', 'Vijay Singh', 'Santosh More', 'Anil Kumar', 'Dinesh Patil', 'Manoj Gupta', 'Prakash Jadhav', 'Sachin Shinde', 'Ravi Thakur', 'Ashok Chavan'];
+const EMP_NAMES = ['Budi Santoso', 'Agus Wijaya', 'Dedi Kurniawan', 'Rizky Pratama', 'Hendra Setiawan', 'Andi Saputra', 'Bambang Suryono', 'Eko Prasetyo', 'Fajar Nugroho', 'Gunawan Halim', 'Iwan Setiadi', 'Joko Susilo'];
 
 function seedAttendanceHours(db: Database, vendorCode: string, month: string, targetHours: number, batchId: string) {
   let remaining = targetHours;
@@ -106,7 +105,7 @@ function seedAttendanceHours(db: Database, vendorCode: string, month: string, ta
       id: `att-${attSeq}`,
       batchId,
       source: 'ESSA-MIS',
-      site: 'Hazira Plant',
+      site: 'Luwuk Plant',
       vendorCode,
       employeeId: `EMP${String(3000 + (emp % 60)).padStart(5, '0')}`,
       employeeName: EMP_NAMES[emp % EMP_NAMES.length],
@@ -132,7 +131,7 @@ function seedAttendanceMeals(db: Database, vendorCode: string, month: string, el
       id: `att-${attSeq}`,
       batchId,
       source: 'ESSA-MIS',
-      site: 'Hazira Plant',
+      site: 'Luwuk Plant',
       vendorCode,
       employeeId: `EMP${String(4000 + (i % 80)).padStart(5, '0')}`,
       employeeName: EMP_NAMES[i % EMP_NAMES.length],
@@ -154,7 +153,6 @@ export interface Scenario {
   vendorCode: string;
   amount: number; // gross incl 18% GST
   daysAgo: number;
-  department: string;
   description: string;
   poNumber?: string | 'AUTO';
   target:
@@ -209,13 +207,50 @@ const DOC_FILES: Record<string, (inv: string) => { fileName: string; documentTyp
   ],
   'cat-nonpo': (n) => [
     { fileName: `${n}_Invoice.pdf`, documentTypeId: 'dt-invoice', pages: 1 },
-    { fileName: `${n}_DeptConfirmation.pdf`, documentTypeId: 'dt-dept', pages: 1 },
+    { fileName: `${n}_HCIS_ClearingJournal.pdf`, documentTypeId: 'dt-dept', pages: 1 },
   ],
 };
 
 let invNoSeq = 740;
 
+/**
+ * Attendance / meal reference data is aggregated by vendor and month by the
+ * validation rules, so it has to be seeded once per vendor+month rather than
+ * once per invoice — otherwise a second invoice for the same vendor in the same
+ * month inflates the eligible count and the scenario that is meant to fail
+ * quietly passes, leaving an invoice sitting in validation with an SLA breach
+ * and nothing to resolve (review, 24 Aug).
+ */
+function seedAttendanceReference(db: Database, scenarios: Scenario[]) {
+  interface Plan { vendorCode: string; month: string; kind: 'HOURS' | 'MEALS'; total: number; short: boolean }
+  const plans = new Map<string, Plan>();
+
+  for (const sc of scenarios) {
+    if (sc.target === 'MISSING_DOCS') continue;
+    const kind = sc.categoryId === 'cat-manpower' ? 'HOURS' : sc.categoryId === 'cat-catering' ? 'MEALS' : null;
+    if (!kind) continue;
+    const month = isoAgo(sc.daysAgo * DAY + 5 * HOUR).slice(0, 7);
+    const subtotal = Math.round((sc.amount / 1.18) * 100) / 100;
+    const amount = kind === 'HOURS' ? Math.round(subtotal / 450) : Math.max(50, Math.round(subtotal / 150));
+    const key = `${sc.vendorCode}|${month}|${kind}`;
+    const plan = plans.get(key) ?? { vendorCode: sc.vendorCode, month, kind, total: 0, short: false };
+    plan.total += amount;
+    if (sc.failKind === 'HOURS_MISMATCH' || sc.failKind === 'MEAL_EXCESS') plan.short = true;
+    plans.set(key, plan);
+  }
+
+  for (const plan of plans.values()) {
+    // A "short" month is the deliberate mismatch: the biometric system recorded
+    // fewer hours / eligible meals than the vendor billed for.
+    const seeded = plan.short ? Math.round(plan.total * (plan.kind === 'HOURS' ? 0.9 : 0.82)) : plan.total;
+    const batchId = `BATCH-${plan.month}-${plan.vendorCode}`;
+    if (plan.kind === 'HOURS') seedAttendanceHours(db, plan.vendorCode, plan.month, seeded, batchId);
+    else seedAttendanceMeals(db, plan.vendorCode, plan.month, seeded, batchId);
+  }
+}
+
 export function seedInvoices(db: Database, scenarios: Scenario[]) {
+  seedAttendanceReference(db, scenarios);
   for (const sc of scenarios) {
     const vendor = db.vendors.find((v) => v.code === sc.vendorCode)!;
     const receivedAt = isoAgo(sc.daysAgo * DAY + 5 * HOUR);
@@ -231,7 +266,7 @@ export function seedInvoices(db: Database, scenarios: Scenario[]) {
     let poNumber: string | undefined;
     if (sc.categoryId !== 'cat-nonpo') {
       const openFactor = sc.failKind === 'PO_EXCEEDED' ? 0.82 : 1.12;
-      const po = mkPo(db, sc.vendorCode, sc.department, subtotal, {
+      const po = mkPo(db, sc.vendorCode, subtotal, {
         openFactor,
         poType: sc.categoryId === 'cat-material' ? 'MATERIAL' : 'SERVICE',
       });
@@ -248,18 +283,6 @@ export function seedInvoices(db: Database, scenarios: Scenario[]) {
       }
     }
 
-    // Attendance reference data (skip for missing-doc drafts; one vendor+month per invoice)
-    if (sc.categoryId === 'cat-manpower' && sc.target !== 'MISSING_DOCS') {
-      const targetHours = Math.round(subtotal / 450);
-      const seeded = sc.failKind === 'HOURS_MISMATCH' ? Math.round(targetHours * 0.9) : targetHours;
-      seedAttendanceHours(db, sc.vendorCode, month, seeded, `BATCH-${month}-${sc.vendorCode}`);
-    }
-    if (sc.categoryId === 'cat-catering' && sc.target !== 'MISSING_DOCS') {
-      const billed = Math.max(50, Math.round(subtotal / 150));
-      const eligible = sc.failKind === 'MEAL_EXCESS' ? Math.round(billed * 0.82) : billed;
-      seedAttendanceMeals(db, sc.vendorCode, month, eligible, `BATCH-${month}-${sc.vendorCode}`);
-    }
-
     const invoice: Invoice = {
       id: ids.invoice(),
       invoiceNumber: vendorInvoiceNo,
@@ -271,10 +294,9 @@ export function seedInvoices(db: Database, scenarios: Scenario[]) {
       amount: sc.amount,
       subtotal,
       taxAmount,
-      currency: 'INR',
+      currency: 'IDR',
       poNumber,
-      department: sc.department,
-      companyCode: '1000',
+      companyCode: 'PAU',
       source: sc.daysAgo % 3 === 0 ? 'EMAIL' : sc.daysAgo % 3 === 1 ? 'SHAREPOINT' : 'MANUAL_UPLOAD',
       stage: 'RECEIVED',
       lifecycle: 'DRAFT',
@@ -323,7 +345,7 @@ export function seedInvoices(db: Database, scenarios: Scenario[]) {
         requirementType: catDoc?.requirementType ?? 'OPTIONAL',
         checkMode: catDoc?.checkMode ?? 'AVAILABILITY_ONLY',
         version: 1,
-        uploadedBy: invoice.source === 'MANUAL_UPLOAD' ? 'Priya Sharma' : 'AP Automation Engine',
+        uploadedBy: invoice.source === 'MANUAL_UPLOAD' ? 'Putri Anggraini' : 'AP Automation Engine',
         uploadedAt: receivedAt,
       });
     }
@@ -376,7 +398,7 @@ export function seedInvoices(db: Database, scenarios: Scenario[]) {
     const approveActive = (comment: string) => {
       const active = steps().find((s) => s.status === 'ACTIVE');
       if (!active) return false;
-      const approver = active.assignedTo ? userFor(active.assignedTo) : userFor('u-meera');
+      const approver = active.assignedTo ? userFor(active.assignedTo) : userFor('u-arjun');
       actOnStep(invoice, active, approver, 'APPROVE', comment);
       return true;
     };
@@ -385,14 +407,14 @@ export function seedInvoices(db: Database, scenarios: Scenario[]) {
     if (sc.target === 'APPROVAL_STEP_2') { approveActive('Reviewed - documents and validation in order.'); continue; }
     if (sc.target === 'TAX_REVIEW') {
       approveActive('AP review completed.');
-      approveActive('Department confirms services received.');
+      approveActive('Service completion confirmed.');
       continue;
     }
     if (sc.target === 'REJECTED') {
       approveActive('AP review completed.');
       const active = steps().find((s) => s.status === 'ACTIVE');
       if (active) {
-        const approver = active.assignedTo ? userFor(active.assignedTo) : userFor('u-kavitha');
+        const approver = active.assignedTo ? userFor(active.assignedTo) : userFor('u-arjun');
         actOnStep(invoice, active, approver, 'REJECT', 'Quantity billed does not match the service completion certificate shared by site team. Please raise a credit note.');
       }
       continue;
@@ -402,8 +424,8 @@ export function seedInvoices(db: Database, scenarios: Scenario[]) {
     for (const s of steps()) {
       if (s.status === 'ACTIVE' || s.status === 'PENDING') {
         s.status = 'APPROVED';
-        s.actedBy = s.assignedTo ?? 'u-meera';
-        s.actedByName = s.assignedToName ?? 'Meera Krishnan';
+        s.actedBy = s.assignedTo ?? 'u-arjun';
+        s.actedByName = s.assignedToName ?? 'Maya Puspita';
         s.actedAt = isoAgo(Math.max(0, sc.daysAgo - 1) * DAY);
         s.comment = 'Approved.';
         s.channel = s.stepNo % 2 === 0 ? 'TEAMS' : 'PORTAL';
@@ -475,46 +497,55 @@ export function seedInvoices(db: Database, scenarios: Scenario[]) {
 
 export const SCENARIOS: Scenario[] = [
   // ---- fully completed lifecycle ----
-  { key: 'paid-mat-1', categoryId: 'cat-material', vendorCode: 'V100012', amount: 1_534_000, daysAgo: 28, department: 'Operations', description: 'CS seamless pipes & gate valves - July delivery', target: 'PAID' },
-  { key: 'paid-srv-1', categoryId: 'cat-service', vendorCode: 'V200015', amount: 590_000, daysAgo: 26, department: 'Operations', description: 'Rotating equipment maintenance - June cycle', target: 'PAID' },
-  { key: 'paid-mnp-1', categoryId: 'cat-manpower', vendorCode: 'V300019', amount: 1_180_000, daysAgo: 32, department: 'Operations', description: 'Contract manpower - plant operations (June)', target: 'PAID' },
-  { key: 'paid-mat-2', categoryId: 'cat-material', vendorCode: 'V100048', amount: 708_000, daysAgo: 24, department: 'Operations', description: 'Trunnion ball valves - partial supply', target: 'PAID' },
-  { key: 'post-mat-1', categoryId: 'cat-material', vendorCode: 'V100034', amount: 1_180_000, daysAgo: 18, department: 'Projects', description: 'SS316 flanges DN80 - lot 2', target: 'POSTED' },
-  { key: 'post-srv-1', categoryId: 'cat-service', vendorCode: 'V200023', amount: 472_000, daysAgo: 15, department: 'Projects', description: 'Instrument calibration & loop checking - phase 2', target: 'POSTED' },
-  { key: 'post-cat-1', categoryId: 'cat-catering', vendorCode: 'V400011', amount: 94_400, daysAgo: 16, department: 'Admin & Facilities', description: 'Canteen services - July meal billing', target: 'POSTED' },
-  { key: 'post-npo-1', categoryId: 'cat-nonpo', vendorCode: 'V600041', amount: 141_600, daysAgo: 40, department: 'Admin & Facilities', description: 'Office stationery & printer consumables', target: 'POSTED' },
-  { key: 'park-mat-1', categoryId: 'cat-material', vendorCode: 'V100077', amount: 2_950_000, daysAgo: 10, department: 'Projects', description: 'LT power cable 3.5C x 300sqmm - drum 1-4', target: 'PARKED' },
-  { key: 'park-mnp-1', categoryId: 'cat-manpower', vendorCode: 'V300027', amount: 944_000, daysAgo: 9, department: 'Admin & Facilities', description: 'Facility support manpower - July', target: 'PARKED' },
-  { key: 'prog-srv-1', categoryId: 'cat-service', vendorCode: 'V200031', amount: 826_000, daysAgo: 6, department: 'Projects', description: 'NDT inspection services - unit 3 shutdown', target: 'IN_PROGRESS' },
-  { key: 'prog-cat-1', categoryId: 'cat-catering', vendorCode: 'V400018', amount: 70_800, daysAgo: 5, department: 'Admin & Facilities', description: 'Night-shift canteen services - July', target: 'IN_PROGRESS' },
-  { key: 'queue-srv-1', categoryId: 'cat-service', vendorCode: 'V200015', amount: 649_000, daysAgo: 4, department: 'Operations', description: 'Compressor overhaul support - July', target: 'VALIDATED_QUEUED' },
+  { key: 'paid-mat-1', categoryId: 'cat-material', vendorCode: 'V100012', amount: 1_534_000, daysAgo: 28, description: 'CS seamless pipes & gate valves - July delivery', target: 'PAID' },
+  { key: 'paid-srv-1', categoryId: 'cat-service', vendorCode: 'V200015', amount: 590_000, daysAgo: 26, description: 'Rotating equipment maintenance - June cycle', target: 'PAID' },
+  { key: 'paid-mnp-1', categoryId: 'cat-manpower', vendorCode: 'V300019', amount: 1_180_000, daysAgo: 32, description: 'Contract manpower - plant operations (June)', target: 'PAID' },
+  { key: 'paid-mat-2', categoryId: 'cat-material', vendorCode: 'V100048', amount: 708_000, daysAgo: 24, description: 'Trunnion ball valves - partial supply', target: 'PAID' },
+  { key: 'post-mat-1', categoryId: 'cat-material', vendorCode: 'V100034', amount: 1_180_000, daysAgo: 2, description: 'SS316 flanges DN80 - lot 2', target: 'POSTED' },
+  { key: 'post-srv-1', categoryId: 'cat-service', vendorCode: 'V200023', amount: 472_000, daysAgo: 3, description: 'Instrument calibration & loop checking - phase 2', target: 'POSTED' },
+  { key: 'post-cat-1', categoryId: 'cat-catering', vendorCode: 'V400011', amount: 94_400, daysAgo: 2, description: 'Canteen services - July meal billing', target: 'POSTED' },
+  { key: 'post-npo-1', categoryId: 'cat-nonpo', vendorCode: 'V600041', amount: 141_600, daysAgo: 3, description: 'Office stationery & printer consumables', target: 'POSTED' },
+  { key: 'park-mat-1', categoryId: 'cat-material', vendorCode: 'V100077', amount: 2_950_000, daysAgo: 1, description: 'LT power cable 3.5C x 300sqmm - drum 1-4', target: 'PARKED' },
+  { key: 'park-mnp-1', categoryId: 'cat-manpower', vendorCode: 'V300027', amount: 944_000, daysAgo: 2, description: 'Facility support manpower - July', target: 'PARKED' },
+  { key: 'prog-srv-1', categoryId: 'cat-service', vendorCode: 'V200031', amount: 826_000, daysAgo: 2, description: 'NDT inspection services - unit 3 shutdown', target: 'IN_PROGRESS' },
+  { key: 'prog-cat-1', categoryId: 'cat-catering', vendorCode: 'V400018', amount: 70_800, daysAgo: 1, description: 'Night-shift canteen services - July', target: 'IN_PROGRESS' },
+  { key: 'queue-srv-1', categoryId: 'cat-service', vendorCode: 'V200015', amount: 649_000, daysAgo: 1, description: 'Compressor overhaul support - July', target: 'VALIDATED_QUEUED' },
 
   // ---- approvals in flight ----
-  { key: 'appr1-mat', categoryId: 'cat-material', vendorCode: 'V100012', amount: 1_003_000, daysAgo: 3, department: 'Operations', description: 'Pipe fittings & fasteners - August lot', target: 'APPROVAL_STEP_1', assignTo: 'u-arjun' },
-  { key: 'appr2-srv', categoryId: 'cat-service', vendorCode: 'V200023', amount: 531_000, daysAgo: 4, department: 'Projects', description: 'Analyzer AMC - quarterly billing', target: 'APPROVAL_STEP_2', slaBreach: true },
-  { key: 'tax-mnp', categoryId: 'cat-manpower', vendorCode: 'V300019', amount: 1_416_000, daysAgo: 5, department: 'Operations', description: 'Contract manpower - plant operations (July)', target: 'TAX_REVIEW', priority: 'HIGH' },
-  { key: 'appr1-npo', categoryId: 'cat-nonpo', vendorCode: 'V500021', amount: 259_600, daysAgo: 2, department: 'Operations', description: 'Freight charges - urgent spares movement', target: 'APPROVAL_STEP_1' },
-  { key: 'appr2-cat', categoryId: 'cat-catering', vendorCode: 'V400011', amount: 88_500, daysAgo: 3, department: 'Admin & Facilities', description: 'Canteen services - August 1st fortnight', target: 'APPROVAL_STEP_2' },
-  { key: 'rej-srv', categoryId: 'cat-service', vendorCode: 'V200031', amount: 413_000, daysAgo: 7, department: 'Projects', description: 'RT film inspection - unit 2', target: 'REJECTED' },
+  { key: 'appr1-mat', categoryId: 'cat-material', vendorCode: 'V100012', amount: 1_003_000, daysAgo: 0, description: 'Pipe fittings & fasteners - August lot', target: 'APPROVAL_STEP_1', assignTo: 'u-arjun' },
+  { key: 'appr2-srv', categoryId: 'cat-service', vendorCode: 'V200023', amount: 531_000, daysAgo: 4, description: 'Analyzer AMC - quarterly billing', target: 'APPROVAL_STEP_2', slaBreach: true },
+  { key: 'tax-mnp', categoryId: 'cat-manpower', vendorCode: 'V300019', amount: 1_416_000, daysAgo: 1, description: 'Contract manpower - plant operations (July)', target: 'TAX_REVIEW', priority: 'HIGH' },
+  { key: 'appr1-npo', categoryId: 'cat-nonpo', vendorCode: 'V500021', amount: 259_600, daysAgo: 0, description: 'Freight charges - urgent spares movement', target: 'APPROVAL_STEP_1' },
+  // Non-PO invoices exercise the amount bands of the BPD approval hierarchy.
+  { key: 'npo-band1', categoryId: 'cat-nonpo', vendorCode: 'V600041', amount: 1_450_000, daysAgo: 0, description: 'Business travel reimbursement - site visit', target: 'APPROVAL_STEP_1' },
+  { key: 'npo-band2', categoryId: 'cat-nonpo', vendorCode: 'V500021', amount: 3_800_000, daysAgo: 1, description: 'Domestic logistics - spares consolidation', target: 'APPROVAL_STEP_2' },
+  { key: 'npo-band3', categoryId: 'cat-nonpo', vendorCode: 'V600041', amount: 12_400_000, daysAgo: 2, description: 'Annual software subscription renewal', target: 'APPROVAL_STEP_2' },
+  { key: 'npo-band5', categoryId: 'cat-nonpo', vendorCode: 'V500021', amount: 62_000_000, daysAgo: 8, description: 'Specialist consultancy - milestone 2', target: 'APPROVAL_STEP_1' },
+  { key: 'npo-new', categoryId: 'cat-nonpo', vendorCode: 'V600041', amount: 890_000, daysAgo: 0, description: 'Hotel accommodation - contractor mobilisation', target: 'RECEIVED' },
+  { key: 'appr2-cat', categoryId: 'cat-catering', vendorCode: 'V400011', amount: 88_500, daysAgo: 1, description: 'Canteen services - August 1st fortnight', target: 'APPROVAL_STEP_2' },
+  { key: 'rej-srv', categoryId: 'cat-service', vendorCode: 'V200031', amount: 413_000, daysAgo: 7, description: 'RT film inspection - unit 2', target: 'REJECTED' },
 
-  // ---- validation failures / exceptions ----
-  { key: 'fail-grn', categoryId: 'cat-material', vendorCode: 'V100034', amount: 1_121_000, daysAgo: 2, department: 'Projects', description: 'SS fasteners & gaskets supply', target: 'VALIDATION_FAILED', failKind: 'GRN_MISMATCH', assignTo: 'u-priya', slaBreach: true },
-  { key: 'fail-po', categoryId: 'cat-service', vendorCode: 'V200015', amount: 767_000, daysAgo: 3, department: 'Operations', description: 'Additional maintenance manhours - July', target: 'VALIDATION_FAILED', failKind: 'PO_EXCEEDED', assignTo: 'u-arjun' },
-  { key: 'fail-ses', categoryId: 'cat-service', vendorCode: 'V200023', amount: 448_400, daysAgo: 1, department: 'Projects', description: 'Instrumentation cabling - tranche 3', target: 'VALIDATION_FAILED', failKind: 'SES_MISMATCH' },
-  { key: 'fail-meal', categoryId: 'cat-catering', vendorCode: 'V400018', amount: 82_600, daysAgo: 12, department: 'Admin & Facilities', description: 'Canteen services - July supplementary', target: 'VALIDATION_FAILED', failKind: 'MEAL_EXCESS', assignTo: 'u-priya', slaBreach: true },
-  { key: 'fail-hours', categoryId: 'cat-manpower', vendorCode: 'V300027', amount: 1_062_000, daysAgo: 13, department: 'Admin & Facilities', description: 'Facility manpower - July interim', target: 'VALIDATION_FAILED', failKind: 'HOURS_MISMATCH', priority: 'HIGH' },
+  // ---- validation failures
+  // The two biometric-mismatch scenarios sit in their own vendor+month so the
+  // shortfall applies to them alone — attendance and meal eligibility are
+  // aggregated per vendor and month by the validation rules. / exceptions ----
+  { key: 'fail-grn', categoryId: 'cat-material', vendorCode: 'V100034', amount: 1_121_000, daysAgo: 5, description: 'SS fasteners & gaskets supply', target: 'VALIDATION_FAILED', failKind: 'GRN_MISMATCH', assignTo: 'u-priya', slaBreach: true },
+  { key: 'fail-po', categoryId: 'cat-service', vendorCode: 'V200015', amount: 767_000, daysAgo: 3, description: 'Additional maintenance manhours - July', target: 'VALIDATION_FAILED', failKind: 'PO_EXCEEDED', assignTo: 'u-arjun' },
+  { key: 'fail-ses', categoryId: 'cat-service', vendorCode: 'V200023', amount: 448_400, daysAgo: 1, description: 'Instrumentation cabling - tranche 3', target: 'VALIDATION_FAILED', failKind: 'SES_MISMATCH' },
+  { key: 'fail-meal', categoryId: 'cat-catering', vendorCode: 'V400018', amount: 82_600, daysAgo: 27, description: 'Canteen services - July supplementary', target: 'VALIDATION_FAILED', failKind: 'MEAL_EXCESS', assignTo: 'u-priya', slaBreach: true },
+  { key: 'fail-hours', categoryId: 'cat-manpower', vendorCode: 'V300027', amount: 1_062_000, daysAgo: 28, description: 'Facility manpower - July interim', target: 'VALIDATION_FAILED', failKind: 'HOURS_MISMATCH', priority: 'HIGH' },
 
   // ---- extraction review (HITL) ----
-  { key: 'hitl-1', categoryId: 'cat-material', vendorCode: 'V100048', amount: 861_400, daysAgo: 1, department: 'Operations', description: 'Control valve spares - scanned copy', target: 'EXTRACTION_REVIEW', degradeFields: ['PO_NUMBER', 'INVOICE_DATE'], assignTo: 'u-priya' },
-  { key: 'hitl-2', categoryId: 'cat-nonpo', vendorCode: 'V500021', amount: 194_700, daysAgo: 1, department: 'Projects', description: 'Detention & warehousing charges', target: 'EXTRACTION_REVIEW', degradeFields: ['INVOICE_AMOUNT', 'TAX_AMOUNT'] },
-  { key: 'hitl-3', categoryId: 'cat-service', vendorCode: 'V200031', amount: 366_800, daysAgo: 0, department: 'Projects', description: 'PAUT inspection - handwritten SES', target: 'EXTRACTION_REVIEW', degradeFields: ['SES_NUMBER'] },
+  { key: 'hitl-1', categoryId: 'cat-material', vendorCode: 'V100048', amount: 861_400, daysAgo: 1, description: 'Control valve spares - scanned copy', target: 'EXTRACTION_REVIEW', degradeFields: ['PO_NUMBER', 'INVOICE_DATE'], assignTo: 'u-priya' },
+  { key: 'hitl-2', categoryId: 'cat-service', vendorCode: 'V200023', amount: 194_700, daysAgo: 1, description: 'Detention & warehousing charges', target: 'EXTRACTION_REVIEW', degradeFields: ['INVOICE_AMOUNT', 'TAX_AMOUNT'] },
+  { key: 'hitl-3', categoryId: 'cat-service', vendorCode: 'V200031', amount: 366_800, daysAgo: 0, description: 'PAUT inspection - handwritten SES', target: 'EXTRACTION_REVIEW', degradeFields: ['SES_NUMBER'] },
 
   // ---- missing documents ----
-  { key: 'miss-1', categoryId: 'cat-material', vendorCode: 'V100077', amount: 590_000, daysAgo: 1, department: 'Projects', description: 'Cable trays & accessories', target: 'MISSING_DOCS', omitDocs: ['dt-grn', 'dt-tax'] },
-  { key: 'miss-2', categoryId: 'cat-manpower', vendorCode: 'V300019', amount: 731_600, daysAgo: 2, department: 'Operations', description: 'Contract manpower - August interim', target: 'MISSING_DOCS', omitDocs: ['dt-attendance', 'dt-manhour'] },
-  { key: 'miss-3', categoryId: 'cat-nonpo', vendorCode: 'V600041', amount: 129_800, daysAgo: 0, department: 'Admin & Facilities', description: 'Deep-clean services - admin block', target: 'MISSING_DOCS', omitDocs: ['dt-dept'] },
+  { key: 'miss-1', categoryId: 'cat-material', vendorCode: 'V100077', amount: 590_000, daysAgo: 1, description: 'Cable trays & accessories', target: 'MISSING_DOCS', omitDocs: ['dt-grn', 'dt-tax'] },
+  { key: 'miss-2', categoryId: 'cat-manpower', vendorCode: 'V300019', amount: 731_600, daysAgo: 2, description: 'Contract manpower - August interim', target: 'MISSING_DOCS', omitDocs: ['dt-attendance', 'dt-manhour'] },
+  { key: 'miss-3', categoryId: 'cat-catering', vendorCode: 'V400011', amount: 129_800, daysAgo: 0, description: 'Deep-clean services - admin block', target: 'MISSING_DOCS', omitDocs: ['dt-meal'] },
 
   // ---- just received ----
-  { key: 'new-1', categoryId: 'cat-material', vendorCode: 'V100012', amount: 424_800, daysAgo: 0, department: 'Operations', description: 'Gasket kits - emergency purchase', target: 'RECEIVED' },
-  { key: 'new-2', categoryId: 'cat-service', vendorCode: 'V200015', amount: 507_400, daysAgo: 0, department: 'Operations', description: 'HVAC maintenance - August', target: 'RECEIVED' },
+  { key: 'new-1', categoryId: 'cat-material', vendorCode: 'V100012', amount: 424_800, daysAgo: 0, description: 'Gasket kits - emergency purchase', target: 'RECEIVED' },
+  { key: 'new-2', categoryId: 'cat-service', vendorCode: 'V200015', amount: 507_400, daysAgo: 0, description: 'HVAC maintenance - August', target: 'RECEIVED' },
 ];

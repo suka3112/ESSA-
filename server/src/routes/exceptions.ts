@@ -6,6 +6,7 @@ import { audit } from '../core/audit';
 import { nowIso } from '../core/ids';
 import { enqueueJob } from '../core/jobs';
 import { addTimeline } from '../modules/pipeline/helpers';
+import { exceptionCodeFor } from '../db/seed/sla';
 
 export const exceptionRouter = Router();
 
@@ -22,6 +23,11 @@ exceptionRouter.get('/exceptions', authorize('EXCEPTION_VIEW'), asyncHandler((re
     });
   }
   if (q.type) items = items.filter((e) => e.type === q.type);
+  // One code per error type (review, 24 Aug): filtering by a code returns only
+  // that error, whatever the invoice, category or vendor.
+  if (q.exceptionCode) {
+    items = items.filter((e) => exceptionCodeFor(e.type, e.documentTypeId)?.code === String(q.exceptionCode));
+  }
   if (q.status) items = items.filter((e) => e.status === q.status);
   if (q.severity) items = items.filter((e) => e.severity === q.severity);
   if (q.assignedTo) items = items.filter((e) => e.assignedTo === q.assignedTo);
@@ -42,8 +48,17 @@ exceptionRouter.get('/exceptions', authorize('EXCEPTION_VIEW'), asyncHandler((re
         vendorName: inv?.vendorName,
         amount: inv?.amount,
         currency: inv?.currency,
+        exceptionCode: exceptionCodeFor(e.type, e.documentTypeId)?.code ?? '—',
+        exceptionCodeLabel: exceptionCodeFor(e.type, e.documentTypeId)?.label ?? '',
+        exceptionCodeDescription: exceptionCodeFor(e.type, e.documentTypeId)?.description ?? '',
         ageHours: Math.round((Date.now() - new Date(e.createdAt).getTime()) / 3600000),
-        slaBreached: e.slaDueAt < nowIso() && !['RESOLVED', 'CLOSED'].includes(e.status),
+        // One SLA clock per invoice (ESSA EAPA SLA Matrix): the workbench shows
+        // the invoice's own SLA rather than a second timer on the exception,
+        // so the two screens can never disagree about what is overdue.
+        slaDueAt: inv?.slaDueAt || e.slaDueAt,
+        slaBreached: inv
+          ? Boolean(inv.slaBreached) && !['RESOLVED', 'CLOSED'].includes(e.status)
+          : e.slaDueAt < nowIso() && !['RESOLVED', 'CLOSED'].includes(e.status),
       };
     }),
   });
@@ -80,7 +95,7 @@ exceptionRouter.post('/exceptions/:id/action', authorize('EXCEPTION_MANAGE'), as
     audit({
       actorType: 'USER', actorId: user.id, actorName: user.name,
       eventType: `EXCEPTION_${a}`, category: 'EXCEPTION', action: a, module: 'exceptions',
-      entityType: 'Exception', entityId: exc.code, entityRef: invoice.invoiceNumber, invoiceId: invoice.id,
+      entityType: 'EXCEPTION', entityId: exc.code, entityRef: invoice.invoiceNumber, invoiceId: invoice.id,
       result: 'SUCCESS', reason: n, correlationId: exc.correlationId, source: 'PORTAL',
     });
   };

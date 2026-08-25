@@ -89,7 +89,7 @@ vendorRouter.post('/vendors/:code/control', authorize('VENDOR_CONTROL'), asyncHa
     audit({
       actorType: 'USER', actorId: user.id, actorName: user.name,
       eventType: `VENDOR_${ch.action}`, category: 'VENDOR', action: ch.action, module: 'vendor',
-      entityType: 'Vendor', entityId: vendor.code, entityRef: vendor.name,
+      entityType: 'VENDOR', entityId: vendor.code, entityRef: vendor.name,
       result: 'SUCCESS', reason,
       oldValue: { value: ch.old }, newValue: { value: ch.next },
       correlationId: req.ctx.correlationId, source: 'PORTAL',

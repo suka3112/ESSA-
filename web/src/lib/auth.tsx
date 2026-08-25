@@ -5,7 +5,6 @@ export interface SessionUser {
   id: string;
   name: string;
   email: string;
-  department: string;
   title: string;
   permissions: string[];
   roleNames: string[];
@@ -15,6 +14,8 @@ interface AuthContextShape {
   user: SessionUser | null;
   loading: boolean;
   login: (userId: string) => Promise<void>;
+  /** Simulated Microsoft Entra ID SSO: signs in the corporate identity without a login form. */
+  ssoLogin: () => Promise<void>;
   logout: () => Promise<void>;
   hasPerm: (...perms: string[]) => boolean;
 }
@@ -23,9 +24,13 @@ const AuthContext = createContext<AuthContextShape>({
   user: null,
   loading: true,
   login: async () => undefined,
+  ssoLogin: async () => undefined,
   logout: async () => undefined,
   hasPerm: () => false,
 });
+
+/** Remembers which directory identity "Entra" resolved to, so refreshes and sign-in/out cycles stay on the same user. */
+const SSO_HINT_KEY = 'essa.sso.user';
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<SessionUser | null>(null);
@@ -70,7 +75,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const r = await api.post<{ token: string; user: SessionUser }>('/auth/login', { userId });
     setToken(r.token);
     setUser(r.user);
+    try {
+      localStorage.setItem(SSO_HINT_KEY, userId);
+    } catch {
+      /* ignore */
+    }
   }, []);
+
+  /**
+   * Azure SSO stand-in (approved design: no Login/2FA screens — authentication
+   * is Microsoft Entra ID). In this demo environment there is no real Entra
+   * tenant, so the "redirect" resolves the corporate identity from the
+   * directory: the previously used identity if one is remembered, otherwise
+   * the first enabled directory user.
+   */
+  const ssoLogin = useCallback(async () => {
+    const directory = await api.get<{ id: string; enabled: boolean }[]>('/auth/directory');
+    let hint: string | null = null;
+    try {
+      hint = localStorage.getItem(SSO_HINT_KEY);
+    } catch {
+      /* ignore */
+    }
+    const target = directory.find((u) => u.id === hint && u.enabled) ?? directory.find((u) => u.enabled);
+    if (!target) throw new Error('No enabled portal user is mapped to this corporate identity.');
+    await login(target.id);
+  }, [login]);
 
   const logout = useCallback(async () => {
     try {
@@ -90,7 +120,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [user]
   );
 
-  const value = useMemo(() => ({ user, loading, login, logout, hasPerm }), [user, loading, login, logout, hasPerm]);
+  const value = useMemo(() => ({ user, loading, login, ssoLogin, logout, hasPerm }), [user, loading, login, ssoLogin, logout, hasPerm]);
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 

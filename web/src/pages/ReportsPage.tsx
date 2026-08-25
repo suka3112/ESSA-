@@ -48,10 +48,10 @@ function DistRow({ label, value, max, tone, sub }: { label: string; value: numbe
 }
 
 export default function ReportsPage() {
-  const [filters, setFilters] = useState({ dateFrom: '', dateTo: '', categoryId: '', vendorCode: '', department: '' });
+  const [filters, setFilters] = useState({ dateFrom: '', dateTo: '', categoryId: '', vendorCode: '' });
   const set = (k: keyof typeof filters) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setFilters((f) => ({ ...f, [k]: e.target.value }));
   const hasFilters = Object.values(filters).some(Boolean);
-  const { data: lookups } = useQuery({ queryKey: ['lookups'], queryFn: () => api.get<{ categories: { id: string; name: string }[]; vendors: { code: string; name: string }[]; departments: string[] }>('/lookups') });
+  const { data: lookups } = useQuery({ queryKey: ['lookups'], queryFn: () => api.get<{ categories: { id: string; name: string }[]; vendors: { code: string; name: string }[] }>('/lookups') });
   const { data, isLoading } = useQuery({
     queryKey: ['reports', filters],
     queryFn: () => api.get<ReportData>(`/reports${qs(filters)}`),
@@ -125,15 +125,9 @@ export default function ReportsPage() {
                 {lookups?.vendors.map((v) => <option key={v.code} value={v.code}>{v.name}</option>)}
               </Select>
             </Filter>
-            <Filter label="Department">
-              <Select value={filters.department} onChange={set('department')} aria-label="Department" className="w-full">
-                <option value="">All departments</option>
-                {lookups?.departments.map((d) => <option key={d} value={d}>{d}</option>)}
-              </Select>
-            </Filter>
           </div>
           {hasFilters && (
-            <Button variant="ghost" size="sm" onClick={() => setFilters({ dateFrom: '', dateTo: '', categoryId: '', vendorCode: '', department: '' })}>
+            <Button variant="ghost" size="sm" onClick={() => setFilters({ dateFrom: '', dateTo: '', categoryId: '', vendorCode: '' })}>
               <RotateCcw size={13} /> Reset
             </Button>
           )}

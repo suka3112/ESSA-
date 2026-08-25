@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Fingerprint, Send } from 'lucide-react';
 import { api, qs } from '@/lib/api';
-import { fmtDateTime, fmtNumber, fmtRelative } from '@/lib/format';
+import { fmtDateTime, fmtNumber } from '@/lib/format';
 import { Badge, Button, Card, DataTable, Input, LoadingState, PageHeader, StatusBadge, useToast, type Column } from '@/components/ui';
 
 interface BiometricData {
@@ -63,7 +63,7 @@ export default function BiometricPage() {
       />
 
       <div className="grid grid-cols-2 gap-2.5 md:grid-cols-4">
-        <Card><p className="text-2xs font-medium uppercase text-ink-muted">Last push</p><p className="mt-1 text-sm font-semibold">{fmtRelative(data.lastPushAt)}</p></Card>
+        <Card><p className="text-2xs font-medium uppercase text-ink-muted">Last push</p><p className="mt-1 text-sm font-semibold">{fmtDateTime(data.lastPushAt)}</p></Card>
         <Card><p className="text-2xs font-medium uppercase text-ink-muted">Total records</p><p className="mt-1 text-xl font-bold">{fmtNumber(data.total)}</p></Card>
         <Card><p className="text-2xs font-medium uppercase text-ink-muted">Batches</p><p className="mt-1 text-xl font-bold">{data.batches.length}</p></Card>
         <Card><p className="text-2xs font-medium uppercase text-ink-muted">Integration mode</p><p className="mt-1 flex items-center gap-1 text-sm font-semibold"><Fingerprint size={15} className="text-essa-600" /> Inbound push API</p></Card>

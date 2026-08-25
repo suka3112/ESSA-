@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { FolderSync, Inbox, Mail } from 'lucide-react';
 import { api } from '@/lib/api';
-import { fmtDateTime, fmtRelative } from '@/lib/format';
+import { fmtDateTime } from '@/lib/format';
 import { Badge, Button, Card, DataTable, StatusBadge, Tabs, useToast, type Column } from '@/components/ui';
 
 interface EmailItem { id: string; sender: string; subject: string; receivedAt: string; attachments: { fileName: string; sizeKb: number }[]; status: string; invoiceId?: string; invoiceNumber?: string; error?: string }
@@ -58,7 +58,7 @@ export default function IngestionChannelsView() {
   const spColumns: Column<SpItem>[] = [
     { key: 'folder', header: 'Folder', render: (s) => <Badge tone="neutral">{s.folder}</Badge> },
     { key: 'fileName', header: 'File', render: (s) => <span className="block max-w-72 truncate text-xs font-medium">{s.fileName}</span> },
-    { key: 'modified', header: 'Detected', render: (s) => <span className="whitespace-nowrap text-2xs">{fmtRelative(s.modifiedAt)}</span> },
+    { key: 'modified', header: 'Detected', render: (s) => <span className="whitespace-nowrap text-2xs">{fmtDateTime(s.modifiedAt)}</span> },
     { key: 'size', header: 'Size', align: 'right', render: (s) => <span className="text-2xs">{s.sizeKb} KB</span> },
     { key: 'status', header: 'Status', render: (s) => <StatusBadge value={s.status} /> },
     { key: 'invoice', header: 'Invoice', render: (s) => (s.invoiceId ? <Link to={`/invoices/${s.invoiceId}`} className="font-medium text-essa-700 hover:underline">{s.invoiceNumber}</Link> : '—') },

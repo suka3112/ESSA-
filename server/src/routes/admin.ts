@@ -5,6 +5,7 @@ import { Errors } from '../core/errors';
 import { audit } from '../core/audit';
 import { ids, nowIso } from '../core/ids';
 import { notifyRole } from '../modules/pipeline/helpers';
+import { recomputeAllSla } from '../core/sla';
 
 export const adminRouter = Router();
 
@@ -58,7 +59,7 @@ adminRouter.post('/configuration/versions', authorize('CONFIG_EDIT'), asyncHandl
   audit({
     actorType: 'USER', actorId: user.id, actorName: user.name,
     eventType: 'CONFIG_DRAFT_CREATED', category: 'CONFIGURATION', action: 'CREATE', module: 'configuration',
-    entityType: 'ConfigurationVersion', entityId: version.id, entityRef: version.versionNo,
+    entityType: 'CONFIGURATION', entityId: version.id, entityRef: version.versionNo,
     result: 'SUCCESS', correlationId: req.ctx.correlationId, source: 'PORTAL',
   });
   res.status(201).json({ version });
@@ -104,7 +105,7 @@ adminRouter.post('/configuration/versions/:id/transition', authorize('CONFIG_PUB
         .map((o) => ({ ...o, id: `${o.id}@${version.versionNo}`, ruleId: `${o.ruleId}@${version.versionNo}` }))
     );
     notifyRole('ADMINISTRATOR', 'CONFIGURATION', `Configuration ${version.versionNo} published`, `${version.label} - effective ${version.effectiveFrom}. New invoices will process on this version.`);
-    notifyRole('AP_MANAGER', 'CONFIGURATION', `Configuration ${version.versionNo} published`, `${version.label} - effective ${version.effectiveFrom}.`);
+    notifyRole('AP_REVIEWER', 'CONFIGURATION', `Configuration ${version.versionNo} published`, `${version.label} - effective ${version.effectiveFrom}.`);
   } else if (action === 'RETIRE') {
     if (version.status !== 'ACTIVE') throw Errors.conflict('Only the active version can be retired');
     version.status = 'RETIRED';
@@ -117,14 +118,24 @@ adminRouter.post('/configuration/versions/:id/transition', authorize('CONFIG_PUB
     actorType: 'USER', actorId: user.id, actorName: user.name,
     eventType: action === 'PUBLISH' ? 'CONFIG_PUBLISHED' : `CONFIG_${action}`, category: 'CONFIGURATION',
     action: action ?? 'TRANSITION', module: 'configuration',
-    entityType: 'ConfigurationVersion', entityId: version.id, entityRef: version.versionNo,
+    entityType: 'CONFIGURATION', entityId: version.id, entityRef: version.versionNo,
     result: 'SUCCESS', oldValue: { status: old }, newValue: { status: version.status },
     correlationId: req.ctx.correlationId, source: 'PORTAL',
   });
   res.json({ version });
 }));
 
-/** Generic draft-entity editor: updates configuration rows in a DRAFT/TESTING version context. */
+/** Object types for the configuration collections, as shown in the Audit Log. */
+const ENTITY_LABEL: Record<string, string> = {
+  categories: 'INVOICE_CATEGORY', documentTypes: 'DOCUMENT_TYPE',
+  categoryDocuments: 'REQUIRED_DOCUMENT', documentFields: 'EXTRACTED_FIELD',
+  promptTemplates: 'EXTRACTION_PROMPT', fieldMappings: 'SAP_FIELD_MAPPING',
+  validationRules: 'VALIDATION_RULE', workflows: 'WORKFLOW',
+  notificationRules: 'NOTIFICATION_RULE', doaMatrix: 'APPROVAL_HIERARCHY',
+  roles: 'ROLE', slaRules: 'SLA_TARGET', reminderRules: 'REMINDER_TIMER',
+  exceptionCodes: 'EXCEPTION_CODE',
+};
+
 adminRouter.post('/configuration/entities/:entity', authorize('CONFIG_EDIT'), asyncHandler((req, res) => {
   const user = requireAuth(req);
   const db = getDb();
@@ -144,9 +155,27 @@ adminRouter.post('/configuration/entities/:entity', authorize('CONFIG_EDIT'), as
     workflows: db.workflowDefinitions as unknown as Row[],
     notificationRules: db.notificationRules as unknown as Row[],
     doaMatrix: db.doaMatrix as unknown as Row[],
+    // SLA targets and reminder/escalation timers (BPD §11.3 / §11.4) are
+    // maintained from Administration → SLA & Reminders.
+    slaRules: db.slaRules as unknown as Row[],
+    reminderRules: db.reminderRules as unknown as Row[],
+    exceptionCodes: db.exceptionCodes as unknown as Row[],
+    // Role Management (design review, Aug 2026): admins can create/edit/
+    // enable-disable custom roles and configure their permissions.
+    roles: db.roles as unknown as Row[],
   };
   const coll = collections[entity];
   if (!coll) throw Errors.badRequest(`Unknown configuration entity ${entity}`);
+
+  // Role safety rails: system roles cannot be deleted, and a role that is
+  // still assigned to users must be unassigned before deletion.
+  if (entity === 'roles' && op === 'DELETE') {
+    const target = db.roles.find((r) => r.id === row.id);
+    if (target?.system) throw Errors.badRequest('System roles cannot be deleted — disable them instead');
+    if (db.users.some((u) => u.roleIds.includes(String(row.id)))) {
+      throw Errors.conflict('This role is still assigned to users — remove the assignments first');
+    }
+  }
 
   let outcome: Row | undefined;
   let oldValue: Row | undefined;
@@ -171,12 +200,15 @@ adminRouter.post('/configuration/entities/:entity', authorize('CONFIG_EDIT'), as
       outcome = coll[idx];
     }
   }
+  // Changing an SLA target moves every running clock, so the invoices are
+  // recomputed straight away rather than drifting until the next seed.
+  if (entity === 'slaRules') recomputeAllSla(db);
   markDirty();
   audit({
     actorType: 'USER', actorId: user.id, actorName: user.name,
     eventType: `CONFIG_${entity.toUpperCase()}_${op}`, category: 'CONFIGURATION', action: op, module: 'configuration',
-    entityType: entity, entityId: String(row.id ?? outcome?.id ?? ''),
-    entityRef: String((row.name as string) ?? (row.ruleName as string) ?? (row.label as string) ?? ''),
+    entityType: ENTITY_LABEL[entity] ?? entity.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toUpperCase(), entityId: String(row.id ?? outcome?.id ?? ''),
+    entityRef: String((row.name as string) ?? (row.ruleName as string) ?? (row.label as string) ?? (row.activityType as string) ?? (row.code as string) ?? ''),
     result: 'SUCCESS', oldValue, newValue: outcome,
     correlationId: req.ctx.correlationId, source: 'PORTAL',
   });
@@ -201,22 +233,26 @@ adminRouter.post('/users/:id', authorize('USER_ADMIN'), asyncHandler((req, res) 
   const db = getDb();
   const target = db.users.find((u) => u.id === req.params.id);
   if (!target) throw Errors.notFound('User', req.params.id);
-  const { enabled, roleIds, department, title } = req.body as { enabled?: boolean; roleIds?: string[]; department?: string; title?: string };
-  const old = { enabled: target.enabled, roleIds: [...target.roleIds] };
+  const { enabled, roleIds, title } = req.body as { enabled?: boolean; roleIds?: string[]; title?: string };
+  // The audit log shows these values to a person, so record them the way the
+  // Users screen shows them — role names and Active/Inactive, never raw ids
+  // (review, 24 Aug: "I have to see the proper value").
+  const roleNames = (ids: string[]) => db.roles.filter((r) => ids.includes(r.id)).map((r) => r.name).join(', ') || 'None';
+  const old = { Status: target.enabled ? 'Active' : 'Inactive', Roles: roleNames(target.roleIds) };
   if (typeof enabled === 'boolean') target.enabled = enabled;
   if (Array.isArray(roleIds)) {
     if (roleIds.some((r) => !db.roles.some((x) => x.id === r))) throw Errors.badRequest('Unknown role in assignment');
     target.roleIds = roleIds;
   }
-  if (department) target.department = department;
   if (title) target.title = title;
   markDirty();
   audit({
     actorType: 'USER', actorId: actor.id, actorName: actor.name,
     eventType: typeof enabled === 'boolean' ? (enabled ? 'USER_ENABLED' : 'USER_DISABLED') : 'ROLE_ASSIGNED',
     category: 'ACCESS', action: 'UPDATE', module: 'identity-access',
-    entityType: 'AppUser', entityId: target.id, entityRef: target.name,
-    result: 'SUCCESS', oldValue: old, newValue: { enabled: target.enabled, roleIds: target.roleIds },
+    entityType: 'USER', entityId: target.id, entityRef: target.name,
+    result: 'SUCCESS', oldValue: old,
+    newValue: { Status: target.enabled ? 'Active' : 'Inactive', Roles: roleNames(target.roleIds) },
     correlationId: req.ctx.correlationId, source: 'PORTAL',
   });
   res.json({ user: target });
@@ -230,20 +266,69 @@ adminRouter.get('/audit', authorize('AUDIT_VIEW'), asyncHandler((req, res) => {
   const text = String(q.search ?? '').trim().toLowerCase();
   if (text) {
     items = items.filter((a) =>
-      [a.actorName, a.eventType, a.entityRef, a.entityId, a.correlationId, a.reason, a.action]
+      [a.actorName, a.eventType, a.entityType, a.entityRef, a.entityId, a.correlationId, a.reason, a.action]
         .some((v) => v?.toLowerCase().includes(text))
     );
   }
+  // Each filter matches exactly one column of the Audit Log, and its options
+  // are the values that appear in that column (design reference, 24 Aug).
+  if (q.entityType) items = items.filter((a) => a.entityType === q.entityType);
+  if (q.eventType) items = items.filter((a) => a.eventType === q.eventType);
+  if (q.source) items = items.filter((a) => sourceLabel(a.source) === q.source);
+  if (q.result) items = items.filter((a) => a.result === q.result);
   if (q.category) items = items.filter((a) => a.category === q.category);
   if (q.actorId) items = items.filter((a) => a.actorId === q.actorId);
-  if (q.result) items = items.filter((a) => a.result === q.result);
+  if (q.actorName) items = items.filter((a) => a.actorName === q.actorName);
   if (q.invoiceId) items = items.filter((a) => a.invoiceId === q.invoiceId);
   if (q.dateFrom) items = items.filter((a) => a.eventTime >= String(q.dateFrom));
   if (q.dateTo) items = items.filter((a) => a.eventTime <= String(q.dateTo) + 'T23:59:59Z');
+
   const p = pageParams(req, 'eventTime');
   items = sortItems(items, p.sortBy, p.sortDir);
-  res.json(paginate(items, p));
+  const page = paginate(items, p);
+
+  // Facets come from the whole log, not the filtered page, so the drop-downs
+  // stay stable while the user narrows the list down.
+  const uniq = <T,>(values: T[]) => [...new Set(values)].filter(Boolean).sort();
+  res.json({
+    ...page,
+    items: page.items.map((a) => ({
+      ...a,
+      source: sourceLabel(a.source),
+      // The expanded record names the role the person held, so it is resolved
+      // here rather than being left to whatever the call site remembered.
+      actorRole: a.actorRole ?? actorRoleOf(a.actorId, a.actorType),
+    })),
+    facets: {
+      objectTypes: uniq(db.auditEvents.map((a) => a.entityType)),
+      actions: uniq(db.auditEvents.map((a) => a.eventType)),
+      sources: uniq(db.auditEvents.map((a) => sourceLabel(a.source))),
+      results: uniq(db.auditEvents.map((a) => a.result)),
+      users: uniq(db.auditEvents.map((a) => a.actorName)),
+    },
+  });
 }));
+
+/**
+ * Where the activity came from. Anything the platform did on its own is SYSTEM;
+ * anything a person did in the portal is PORTAL. The specific channel
+ * (single sign-on, the V1 portal) is an implementation detail.
+ */
+function sourceLabel(source: string): string {
+  if (source === 'BACKEND' || source === 'SYSTEM' || source === 'SCHEDULER') return 'SYSTEM';
+  if (source === 'ENTRA_SSO' || source === 'V1_SWITCH') return 'PORTAL';
+  return source;
+}
+
+/** The role the actor holds, for the expanded record. */
+function actorRoleOf(actorId: string, actorType: string): string {
+  if (actorType !== 'USER') return 'System';
+  const db = getDb();
+  const actor = db.users.find((u) => u.id === actorId);
+  if (!actor) return '—';
+  const roles = db.roles.filter((r) => actor.roleIds.includes(r.id)).map((r) => r.name);
+  return roles.join(', ') || actor.title || '—';
+}
 
 // ------------------------------------------------------------- tech logs
 adminRouter.get('/tech-logs', authorize('TECH_LOG_VIEW'), asyncHandler((req, res) => {

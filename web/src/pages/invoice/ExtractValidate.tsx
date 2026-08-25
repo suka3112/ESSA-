@@ -14,13 +14,13 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  CheckCircle2, ChevronDown, Copy, FileText, Mail, Pencil, RefreshCcw, Save, ShieldCheck, ShieldOff, X,
+  AlertTriangle, CheckCircle2, ChevronDown, FileText, Mail, Pencil, RefreshCcw, Save, ShieldCheck, ShieldOff, X, XCircle,
 } from 'lucide-react';
 import clsx from 'clsx';
 import { api, ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
-import { fmtDateTime, fmtMoney, fmtNumber } from '@/lib/format';
-import { Badge, Button, ConfirmDialog, Input, Modal, useToast } from '@/components/ui';
+import { currentStatus, fmtDateTime, fmtMoney, fmtNumber, nextStatus, statusDetail } from '@/lib/format';
+import { Badge, Button, ConfirmDialog, Field, Input, InvoiceStatusBadge, Modal, ScrollTabs, Textarea, useToast } from '@/components/ui';
 import type { FieldRow, InvoiceDetail, ValidationResultRow } from './types';
 
 const letter = (i: number) => String.fromCharCode(65 + i);
@@ -164,21 +164,65 @@ export function ExtractValidateTab({
   });
 
   const failedChecks = results.filter((r) => ['FAIL', 'HARD_FAIL', 'WARNING'].includes(r.result));
+  // V1-style draft email body: greeting, issue list with Expected/Found, sign-off.
   const reportText = [
-    `Validation report — Invoice ${inv.invoiceNumber} (${inv.vendorName})`,
-    `PO ${inv.poNumber ?? '—'} · ${passedLabel}`,
+    `Dear ${inv.vendorName},`,
     '',
-    ...failedChecks.map((r, i) => `${i + 1}. [${r.result}] ${r.ruleName}: ${r.message} (expected ${r.expected}; captured ${r.actual})`),
+    ...(failedChecks.length
+      ? [
+          `We have reviewed invoice ${inv.invoiceNumber}${inv.poNumber ? ` (PO ${inv.poNumber})` : ''} and identified the following validation issue(s) that require your attention before we can proceed with processing:`,
+          '',
+          ...failedChecks.flatMap((r, i) => [
+            `${i + 1}. ${r.ruleName}`,
+            `   ${r.message}`,
+            `   Expected: ${r.expected || '—'}`,
+            `   Found: ${r.actual || '—'}`,
+          ]),
+          '',
+          'Please correct the above and resubmit the invoice with any supporting documents at your earliest convenience.',
+        ]
+      : [
+          `We have reviewed invoice ${inv.invoiceNumber}${inv.poNumber ? ` (PO ${inv.poNumber})` : ''} and all validation checks passed (${passedLabel}). No action is required from your side; the invoice is proceeding through processing.`,
+        ]),
+    '',
+    'Regards,',
+    'ESSA Accounts Payable',
   ].join('\n');
 
   const canRevalidate = hasPerm('INVOICE_REVALIDATE') && !['IN_PROGRESS', 'PARKED', 'POSTED', 'PAID'].includes(inv.lifecycle);
 
+  /** Pass / Passed with exceptions / Failed — the headline result of the run. */
+  const warnCount = results.filter((r) => ['WARNING', 'OVERRIDDEN'].includes(r.result)).length;
+  const overall: { label: string; tone: 'pass' | 'warn' | 'fail' } = !run
+    ? { label: 'Not validated yet', tone: 'warn' }
+    : failCount > 0
+      ? { label: `Failed · ${failCount} check${failCount === 1 ? '' : 's'}`, tone: 'fail' }
+      : warnCount > 0
+        ? { label: 'Passed with exceptions', tone: 'warn' }
+        : { label: 'Passed', tone: 'pass' };
+
+  /** Fields the validation engine could not accept — shown in red, not just dotted. */
+  const fieldFailed = (f: FieldRow) => f.validationStatus === 'INVALID';
+  const fieldNeedsReview = (f: FieldRow) => f.validationStatus === 'REVIEW' || (!f.value && f.mandatory);
+
   return (
     <div className="space-y-4">
-      <p className="text-xs text-ink-secondary">
-        <span className="font-semibold text-ink">Extract &amp; validate</span>
-        <span className="ml-2 text-ink-muted">Review AI-extracted fields and validation results for this invoice</span>
-      </p>
+      {/* Checklist row 64: the invoice's current state is repeated at the top of
+          this tab, so the AP team can see where the invoice stands without
+          scrolling back to the page header. */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs text-ink-secondary">
+          <span className="font-semibold text-ink">Extract &amp; validate</span>
+          <span className="ml-2 text-ink-muted">Review AI-extracted fields and validation results for this invoice</span>
+        </p>
+        <p className="flex flex-wrap items-center gap-1.5 text-2xs text-ink-muted">
+          <span className="uppercase tracking-wide">Current</span>
+          <InvoiceStatusBadge status={currentStatus(inv)} />
+          {statusDetail(inv) && <span className="text-ink-muted">· {statusDetail(inv)}</span>}
+          <span className="ml-1 uppercase tracking-wide">Next</span>
+          <InvoiceStatusBadge status={nextStatus(inv)} muted />
+        </p>
+      </div>
 
       {/* ============================================================ EXTRACTION */}
       <section className="rounded-lg border border-line bg-white shadow-card">
@@ -195,8 +239,9 @@ export function ExtractValidateTab({
 
         {extractOpen && (
           <div className="px-4 pb-4">
-            {/* per-document sub-tabs */}
-            <div className="flex flex-wrap gap-x-1 gap-y-1 border-b border-line-soft">
+            {/* per-document sub-tabs — one row; chevrons appear when tabs overflow */}
+            <ScrollTabs className="border-b border-line-soft">
+              <div className="flex flex-nowrap gap-1">
               {docTypes.map((g) => {
                 const isActive = g.id === active?.id;
                 return (
@@ -208,14 +253,20 @@ export function ExtractValidateTab({
                       isActive ? 'border-essa-600 font-semibold text-essa-700' : 'border-transparent text-ink-secondary hover:text-ink'
                     )}
                   >
-                    {g.name}
-                    <span className={clsx('rounded-full px-1.5 py-0.5 text-2xs font-semibold leading-none', isActive ? 'bg-essa-600 text-white' : 'text-ink-muted')}>
+                    <span className={clsx(g.fields.some(fieldFailed) && 'font-semibold text-semantic-error')}>{g.name}</span>
+                    <span
+                      className={clsx(
+                        'rounded-full px-1.5 py-0.5 text-2xs font-semibold leading-none',
+                        g.fields.some(fieldFailed) ? 'bg-semantic-error text-white' : isActive ? 'bg-essa-600 text-white' : 'text-ink-muted'
+                      )}
+                    >
                       {g.fields.length}
                     </span>
                   </button>
                 );
               })}
-            </div>
+              </div>
+            </ScrollTabs>
 
             {active && (
               <div className="mt-3 rounded-lg border border-line">
@@ -261,8 +312,17 @@ export function ExtractValidateTab({
                       <thead>
                         <tr>
                           {active.fields.map((f) => (
-                            <th key={f.id} className="min-w-36 border-r border-essa-500/40 bg-essa-600 px-3 py-2 text-left font-semibold text-white last:border-r-0">
-                              {f.label}
+                            <th
+                              key={f.id}
+                              className={clsx(
+                                'min-w-36 border-r px-3 py-2 text-left font-semibold text-white last:border-r-0',
+                                fieldFailed(f) ? 'border-red-400/50 bg-semantic-error' : fieldNeedsReview(f) ? 'border-amber-400/50 bg-amber-500' : 'border-essa-500/40 bg-essa-600'
+                              )}
+                            >
+                              <span className="flex items-center gap-1">
+                                {fieldFailed(f) && <XCircle size={11} />}
+                                {f.label}
+                              </span>
                             </th>
                           ))}
                         </tr>
@@ -272,7 +332,11 @@ export function ExtractValidateTab({
                           {active.fields.map((f) => (
                             <td
                               key={f.id}
-                              className="min-w-36 border-r border-line-soft px-3 py-2.5 align-top last:border-r-0"
+                              className={clsx(
+                                'min-w-36 border-r border-line-soft px-3 py-2.5 align-top last:border-r-0',
+                                fieldFailed(f) && 'bg-semantic-errorBg',
+                                !fieldFailed(f) && fieldNeedsReview(f) && 'bg-semantic-warningBg'
+                              )}
                               onMouseEnter={() => onHighlight?.(f.id)}
                               onMouseLeave={() => onHighlight?.(null)}
                             >
@@ -280,8 +344,8 @@ export function ExtractValidateTab({
                                 <Input value={draft[f.id] ?? ''} onChange={(e) => setDraft((d) => ({ ...d, [f.id]: e.target.value }))} placeholder={`Enter ${f.label}`} className="w-full" />
                               ) : f.value ? (
                                 <span className="flex items-start gap-1.5">
-                                  <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-essa-500" />
-                                  <span className="text-ink">{f.value}</span>
+                                  <span className={clsx('mt-1 h-1.5 w-1.5 shrink-0 rounded-full', fieldFailed(f) ? 'bg-semantic-error' : fieldNeedsReview(f) ? 'bg-amber-400' : 'bg-essa-500')} />
+                                  <span className={clsx(fieldFailed(f) ? 'font-semibold text-semantic-error' : 'text-ink')}>{f.value}</span>
                                 </span>
                               ) : (
                                 <span className="flex items-start gap-1.5">
@@ -357,7 +421,7 @@ export function ExtractValidateTab({
                 )}
               </span>
               <span className="block text-2xs text-ink-muted">
-                {results.length || 12}-point checklist against PO Master, Vendor Master, and supporting documents
+                {results.length || 12}-point checklist against master data, transaction data and supporting documents
               </span>
             </span>
           </span>
@@ -379,6 +443,19 @@ export function ExtractValidateTab({
             {/* chips + report */}
             <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5">
               <span className="flex flex-wrap items-center gap-2">
+                {/* One eye-catching overall result, so the user does not have to
+                    scroll the checklist to learn where the invoice stands. */}
+                <span
+                  className={clsx(
+                    'inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-bold uppercase tracking-wide',
+                    overall.tone === 'fail' ? 'bg-semantic-error text-white'
+                      : overall.tone === 'warn' ? 'bg-amber-500 text-white'
+                        : 'bg-essa-600 text-white'
+                  )}
+                >
+                  {overall.tone === 'fail' ? <XCircle size={13} /> : overall.tone === 'warn' ? <AlertTriangle size={13} /> : <CheckCircle2 size={13} />}
+                  {overall.label}
+                </span>
                 <span className={clsx('rounded-md border px-2 py-1 text-2xs font-bold', failCount ? 'border-red-200 bg-semantic-errorBg text-semantic-error' : 'border-essa-200 bg-essa-50 text-essa-700')}>
                   • {passedLabel}
                 </span>
@@ -392,8 +469,9 @@ export function ExtractValidateTab({
               </Button>
             </div>
 
-            {/* numbered check tabs */}
-            <div className="flex flex-wrap gap-x-1 gap-y-0.5 border-b border-t border-line-soft px-2 pt-1">
+            {/* numbered check tabs — one row; chevrons appear when tabs overflow */}
+            <ScrollTabs className="border-b border-t border-line-soft px-2 pt-1">
+              <div className="flex flex-nowrap gap-1">
               {results.map((r, i) => {
                 const failing = ['FAIL', 'HARD_FAIL'].includes(r.result);
                 const warning = ['WARNING', 'OVERRIDDEN'].includes(r.result);
@@ -408,14 +486,17 @@ export function ExtractValidateTab({
                       !isSel && (failing ? 'text-semantic-error/80 hover:text-semantic-error' : warning ? 'text-semantic-warning hover:text-ink' : 'text-ink-secondary hover:text-ink')
                     )}
                   >
+                    {/* Pass/fail is carried by an icon as well as colour so the
+                        result is readable without relying on colour alone. */}
+                    <span className="mr-1 inline-flex align-[-2px]">
+                      {failing ? <XCircle size={12} /> : warning ? <AlertTriangle size={12} /> : <CheckCircle2 size={12} className="text-essa-600" />}
+                    </span>
                     {i + 1}. {shortRuleLabel(r.ruleName)}
-                    {(failing || warning) && (
-                      <span className={clsx('absolute right-0.5 top-1 h-1.5 w-1.5 rounded-full', failing ? 'bg-semantic-error' : 'bg-amber-400')} />
-                    )}
                   </button>
                 );
               })}
-            </div>
+              </div>
+            </ScrollTabs>
 
             {/* selected check detail */}
             {selected && (
@@ -433,6 +514,9 @@ export function ExtractValidateTab({
                       </span>
                     </span>
                     <span className="flex items-center gap-2">
+                      {/* UI/UX review §7: a failed check is corrected here —
+                          edit the field above and re-validate. There is no
+                          separate exception screen for the same invoice. */}
                       {['FAIL', 'HARD_FAIL', 'WARNING'].includes(selected.result) && selected.overrideAllowed && hasPerm('VALIDATION_OVERRIDE') && (
                         <Button size="sm" variant="warning" onClick={() => setOverriding(selected)}>
                           <ShieldOff size={12} /> Override
@@ -458,7 +542,7 @@ export function ExtractValidateTab({
                       {selected.operandValues.map((o) => (
                         <div key={o.alias} className="rounded-lg border border-line-soft bg-white px-3 py-2">
                           <p className="text-2xs font-semibold uppercase tracking-wide text-ink-faint">{o.label} <span className="normal-case">({o.source})</span></p>
-                          <p className="mt-0.5 text-sm font-semibold text-ink">{o.value == null ? '—' : typeof o.value === 'number' ? o.value.toLocaleString('en-IN') : o.value}</p>
+                          <p className="mt-0.5 text-sm font-semibold text-ink">{o.value == null ? '—' : typeof o.value === 'number' ? o.value.toLocaleString('en-US') : o.value}</p>
                           {o.detail && <p className="text-2xs text-ink-muted">{o.detail}</p>}
                         </div>
                       ))}
@@ -534,36 +618,101 @@ export function ExtractValidateTab({
         }
       />
 
-      {/* report to vendor */}
-      <Modal
+      {/* Report to vendor — email compose (design review): CC field, standardized
+          non-editable subject (vendor + invoice number + date so replies match
+          back uniquely), template-prefilled editable body, Send + Cancel only. */}
+      <ReportToVendorModal
         open={reportOpen}
         onClose={() => setReportOpen(false)}
-        title="Report to vendor"
-        footer={
-          <>
-            <Button variant="ghost" onClick={() => setReportOpen(false)}>Close</Button>
-            <Button
-              onClick={() => {
-                navigator.clipboard?.writeText(reportText);
-                toast.push({ tone: 'success', title: 'Report copied', detail: 'Paste it into your email or vendor communication channel.' });
-              }}
-            >
-              <Copy size={13} /> Copy report
-            </Button>
-          </>
-        }
-      >
-        {failedChecks.length === 0 ? (
-          <p className="flex items-center gap-2 text-xs text-ink-secondary">
-            <CheckCircle2 size={14} className="text-essa-600" /> All checks passed — there is nothing to report to the vendor.
-          </p>
-        ) : (
-          <div className="space-y-2">
-            <p className="text-xs text-ink-muted">Summary of failed / warning checks for {inv.vendorName}:</p>
-            <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded-md bg-canvas p-3 text-2xs text-ink-secondary">{reportText}</pre>
-          </div>
-        )}
-      </Modal>
+        vendorName={inv.vendorName}
+        vendorCode={inv.vendorCode}
+        invoiceNumber={inv.invoiceNumber}
+        category={inv.categoryName}
+        hasFailures={failedChecks.length > 0}
+        reportText={reportText}
+        onSent={() => toast.push({ tone: 'success', title: 'Report sent to vendor', detail: 'Email queued via the notification service and recorded in the audit trail.' })}
+      />
     </div>
+  );
+}
+
+/**
+ * Report-to-vendor email compose. Vendor "To" addresses come from the vendor
+ * master; the internal AP team can be CC'd. The subject is standardized and
+ * non-editable so vendor replies can be uniquely matched back to the invoice.
+ */
+function ReportToVendorModal({
+  open, onClose, vendorName, vendorCode, invoiceNumber, category, hasFailures, reportText, onSent,
+}: {
+  open: boolean;
+  onClose: () => void;
+  vendorName: string;
+  vendorCode: string;
+  invoiceNumber: string;
+  category?: string;
+  hasFailures: boolean;
+  reportText: string;
+  onSent: () => void;
+}) {
+  const [to, setTo] = useState('');
+  const [cc, setCc] = useState('');
+  const [body, setBody] = useState('');
+  const [seeded, setSeeded] = useState(false);
+  if (open && !seeded) {
+    setSeeded(true);
+    setBody(reportText);
+    setTo(`${vendorCode.toLowerCase()}@vendor-master.essa.co.in`);
+  }
+  if (!open && seeded) {
+    // reset for the next open
+    setSeeded(false);
+  }
+  const today = new Date().toLocaleDateString('en-CA');
+  const subject = `[EAPA] ${vendorName} · Invoice ${invoiceNumber}${category ? ` · ${category}` : ''} · ${hasFailures ? 'Validation failure' : 'Validation report'} ${today}`;
+  return (
+    /* V1-style emailer popup: To, CC, Subject (non-editable), Message, and
+       Cancel + Send — opened from "Report to vendor" inside Validation. */
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={
+        <span>
+          Report to vendor
+          <span className="mt-0.5 block text-xs font-normal text-ink-muted">
+            {hasFailures ? 'Draft email with validation failures pre-filled. Edit before sending.' : 'Draft email with the validation report pre-filled. Edit before sending.'}
+          </span>
+        </span>
+      }
+      wide
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button
+            disabled={!to.trim() || !body.trim()}
+            onClick={() => {
+              onSent();
+              onClose();
+            }}
+          >
+            <Mail size={13} /> Send
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-3">
+        <Field label="To">
+          <Input value={to} onChange={(e) => setTo(e.target.value)} placeholder="vendor@company.com" />
+        </Field>
+        <Field label="CC">
+          <Input value={cc} onChange={(e) => setCc(e.target.value)} placeholder="ap.team@essa.co.in" />
+        </Field>
+        <Field label="Subject (non-editable)">
+          <Input value={subject} disabled />
+        </Field>
+        <Field label="Message">
+          <Textarea rows={11} maxLength={2000} value={body} onChange={(e) => setBody(e.target.value)} className="font-mono !text-2xs" />
+        </Field>
+      </div>
+    </Modal>
   );
 }

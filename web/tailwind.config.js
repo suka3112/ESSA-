@@ -22,9 +22,9 @@ export default {
         canvas: '#f6f8f7',
         ink: {
           DEFAULT: '#1f2937',
-          secondary: '#4b5563',
-          muted: '#6b7280',
-          faint: '#9ca3af',
+          secondary: '#374151',
+          muted: '#4b5563',
+          faint: '#6b7280',
         },
         line: {
           DEFAULT: '#e5e7eb',

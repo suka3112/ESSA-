@@ -1,31 +1,39 @@
 /**
- * Invoice detail page — V1 vendor-portal layout, V2 design system.
+ * Invoice Detail — the single place where an invoice is understood and fixed.
  *
- * Layout mirrors V1: back button + title header, invoice meta strip with the
- * amount on the right, a collapsible document pane on the left (Hide/View
- * document), and a tabbed card on the right whose first tab is the combined
- * "Extract & Validate" view. V2-only capabilities (SAP Mapping, Exceptions,
- * Approvals, Audit) remain available as additional tabs.
+ * UI/UX review (Aug 2026):
+ *  · Current Status and Next Status are shown in the header with the same
+ *    wording and tooltips used everywhere else.
+ *  · No separate "Exceptions" tab: failed checks are corrected in Extract &
+ *    Validate, and anything that cannot be fixed there (missing document,
+ *    rejection, technical failure) is handled in the panel above the tabs.
+ *  · The document selector drop-down is gone — picking a document tab in
+ *    Extract & Validate shows that document, exactly as in the reference build.
+ *  · A rejected invoice explains what happens next instead of leaving the user
+ *    to guess how resubmission works.
  */
 import { useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, CalendarDays, PanelRightClose, PanelRightOpen, Plus, Send, UserPlus } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, ArrowRight, CalendarDays, PanelRightClose, PanelRightOpen, Plus, Send } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
-import { fmtDate, fmtMoney, titleCase } from '@/lib/format';
+import { currentStatus, fmtDate, fmtDateTime, fmtMoney, isPreExtraction, nextStatus, titleCase } from '@/lib/format';
 import {
-  Badge, Button, Card, ErrorState, Field, LoadingState, Modal, Select, StatusBadge, Tabs, useToast, Input,
+  Badge, Button, Card, ErrorState, Field, InvoiceStatusBadge, LoadingState, Modal, NotAvailable, Select, Tabs, useToast, Input,
 } from '@/components/ui';
 import type { DocumentRow, InvoiceDetail } from './invoice/types';
 import { DocumentViewer } from './invoice/DocumentViewer';
 import { ExtractValidateTab } from './invoice/ExtractValidate';
-import { ApprovalsTab, AuditTab, ExceptionsTab, TimelineTab } from './invoice/tabs2';
-import { MappingTab } from './invoice/MappingTab';
+import { ApprovalsTab, TimelineTab } from './invoice/tabs2';
+import { ExceptionActions } from './exceptions/ExceptionActions';
 
-/** Legacy tab keys (old bookmarks / links) map onto the new V1-style tabs. */
+/** Legacy tab keys (old bookmarks / links) map onto the current tabs. */
 const LEGACY_TABS: Record<string, string> = {
   overview: 'extract', documents: 'extract', fields: 'extract', validation: 'extract',
+  mapping: 'extract', audit: 'timeline',
+  // The Exceptions tab was removed — exception handling lives on this page.
+  exceptions: 'extract',
 };
 
 export default function InvoiceDetailPage() {
@@ -41,7 +49,6 @@ export default function InvoiceDetailPage() {
   const [selectedDoc, setSelectedDoc] = useState<string | null>(null);
   const [highlightField, setHighlightField] = useState<string | null>(null);
   const [docModal, setDocModal] = useState<{ mode: 'add' | 'replace'; doc?: DocumentRow; documentTypeId?: string } | null>(null);
-  const [assignOpen, setAssignOpen] = useState(false);
 
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['invoice', id],
@@ -53,21 +60,24 @@ export default function InvoiceDetailPage() {
   const handoff = useMutation({
     mutationFn: () => api.post(`/invoices/${id}/sap-handoff`),
     onSuccess: () => {
-      toast.push({ tone: 'success', title: 'SAP handoff queued' });
+      toast.push({ tone: 'success', title: 'Sent to SAP for parking' });
       invalidate();
     },
     onError: (e) => toast.push({ tone: 'error', title: 'Handoff failed', detail: e instanceof ApiError ? e.body.message : String(e) }),
   });
 
-  if (isLoading) return <LoadingState label="Loading invoice workbench…" />;
+  if (isLoading) return <LoadingState label="Loading invoice…" />;
   if (isError || !data) {
     const err = error instanceof ApiError ? error : undefined;
     return <ErrorState message={err?.body.message ?? 'Invoice could not be loaded'} correlationId={err?.body.correlationId} onRetry={() => refetch()} />;
   }
   const inv = data.invoice;
-  const openExceptions = data.exceptions.filter((e) => !['RESOLVED', 'CLOSED'].includes(e.status)).length;
+  const openExceptions = data.exceptions.filter((e) => !['RESOLVED', 'CLOSED'].includes(e.status));
   const activeSteps = data.workflow?.steps.filter((s) => s.status === 'ACTIVE').length ?? 0;
   const failedChecks = data.validationResults.filter((r) => ['FAIL', 'HARD_FAIL'].includes(r.result)).length;
+  const state = { ...inv, openExceptions: openExceptions.length };
+  const processing = isPreExtraction(inv);
+  const rejected = currentStatus(state) === 'Rejected';
 
   const setTab = (t: string) => {
     const next = new URLSearchParams(params);
@@ -83,23 +93,27 @@ export default function InvoiceDetailPage() {
           <Button variant="secondary" size="sm" onClick={() => navigate('/invoices')}>
             <ArrowLeft size={14} /> Invoices
           </Button>
-          <h1 className="text-xl font-semibold text-ink">{inv.categoryName ? `${inv.categoryName} Invoice` : 'Invoice'}</h1>
+          <h1 className="text-xl font-semibold text-ink">
+            {inv.categoryName ? (/invoice$/i.test(inv.categoryName) ? inv.categoryName : `${inv.categoryName} Invoice`) : 'Invoice'}
+          </h1>
+          {/* Current Status → Next Status, in the shared vocabulary. */}
           <span className="flex flex-wrap items-center gap-1.5">
-            <StatusBadge value={inv.lifecycle} />
-            <StatusBadge value={inv.stage} />
-            {inv.processingFlag && <Badge tone="warning">{titleCase(inv.processingFlag)}</Badge>}
-            {inv.priority !== 'NORMAL' && <StatusBadge value={inv.priority} />}
+            <span className="text-2xs font-semibold uppercase tracking-wide text-ink-muted">Current</span>
+            <InvoiceStatusBadge status={currentStatus(state)} />
+            <ArrowRight size={12} className="text-ink-faint" />
+            <span className="text-2xs font-semibold uppercase tracking-wide text-ink-muted">Next</span>
+            <InvoiceStatusBadge status={nextStatus(state)} muted />
           </span>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {hasPerm('INVOICE_EDIT') && (
-            <Button variant="ghost" size="sm" onClick={() => setAssignOpen(true)}>
-              <UserPlus size={14} /> Assign
-            </Button>
-          )}
           {hasPerm('SAP_RETRY') && inv.lifecycle === 'VALIDATED' && (
             <Button size="sm" loading={handoff.isPending} onClick={() => handoff.mutate()}>
-              <Send size={14} /> SAP Handoff
+              <Send size={14} /> Send to SAP
+            </Button>
+          )}
+          {hasPerm('INVOICE_EDIT') && (
+            <Button size="sm" variant="secondary" onClick={() => setDocModal({ mode: 'add' })}>
+              <Plus size={13} /> Add document
             </Button>
           )}
           <Button variant="secondary" size="sm" onClick={() => setShowDoc((s) => !s)}>
@@ -113,68 +127,114 @@ export default function InvoiceDetailPage() {
       <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-2">
         <div className="space-y-1">
           <p className="flex flex-wrap items-baseline gap-x-2 text-xs">
-            <span className="text-2xs text-ink-muted">Invoice no.</span>
-            <span className="text-lg font-bold text-ink">{inv.invoiceNumber}</span>
+            <span className="text-xs font-semibold text-ink-secondary">Invoice number</span>
+            {processing ? <NotAvailable label="Reading from document…" /> : <span className="text-lg font-bold text-ink">{inv.invoiceNumber}</span>}
             <span className="text-ink-faint">·</span>
-            <span className="text-2xs text-ink-muted">Vendor</span>
-            <span className="font-semibold text-ink">{inv.vendorName}</span>
+            <span className="text-xs font-semibold text-ink-secondary">Vendor</span>
+            {processing ? <NotAvailable /> : <span className="font-semibold text-ink">{inv.vendorName}</span>}
           </p>
           <p className="flex flex-wrap items-center gap-x-2 text-xs text-ink-secondary">
-            <span className="text-2xs text-ink-muted">PO no.</span>
+            <span className="text-xs font-semibold text-ink-secondary">PO number</span>
             <span className="font-mono font-semibold text-essa-700">{inv.poNumber ?? '—'}</span>
             <span className="text-ink-faint">·</span>
-            <span className="text-2xs text-ink-muted">Invoice date</span>
-            <span className="flex items-center gap-1 font-medium"><CalendarDays size={12} /> {fmtDate(inv.invoiceDate)}</span>
-            {inv.slaBreached && <Badge tone="error">SLA breached</Badge>}
-            {inv.assignedToName && <span className="text-2xs text-ink-muted">· Assigned to <span className="font-medium text-ink-secondary">{inv.assignedToName}</span></span>}
+            <span className="text-xs font-semibold text-ink-secondary">Invoice date</span>
+            {processing ? <NotAvailable /> : <span className="flex items-center gap-1 font-medium"><CalendarDays size={12} /> {fmtDate(inv.invoiceDate)}</span>}
+            <span className="text-ink-faint">·</span>
+            <span className="text-xs font-semibold text-ink-secondary">SLA due</span>
+            {inv.slaBreached ? <Badge tone="error">SLA Breached</Badge> : <span className="font-medium">{fmtDateTime(inv.slaDueAt)}</span>}
           </p>
         </div>
         <p className="text-right">
-          <span className="mr-2 text-2xs text-ink-muted">Invoice amount</span>
-          <span className="text-2xl font-bold text-ink">{fmtMoney(inv.amount, inv.currency)}</span>
+          <span className="mr-2 text-xs font-semibold text-ink-secondary">Invoice amount</span>
+          {processing ? <NotAvailable /> : <span className="text-2xl font-bold text-ink">{fmtMoney(inv.amount, inv.currency)}</span>}
         </p>
       </div>
+
+      {/* Still extracting — say so plainly instead of showing half-read values. */}
+      {processing && (
+        <div className="flex items-center gap-2 rounded-lg border border-line bg-canvas px-3 py-2 text-xs text-ink-secondary">
+          <span className="h-2 w-2 animate-pulse rounded-full bg-essa-500" />
+          The invoice is being processed. Invoice number, vendor, category and amount appear once extraction finishes.
+        </div>
+      )}
+
+      {/* A rejected invoice explains the resubmission route in plain language. */}
+      {rejected && (
+        <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-semantic-errorBg px-3 py-2 text-xs text-semantic-error">
+          <AlertTriangle size={15} className="mt-0.5 shrink-0" />
+          <span>
+            <span className="font-semibold">This invoice was rejected.</span>{' '}
+            It stays in the system until corrected documents are received. When the vendor sends the corrected
+            documents they replace the ones on this invoice and processing continues here. If the vendor issues a
+            different invoice number, a new invoice record is created and this one is closed — the Timeline tab records
+            both sides of that change.
+          </span>
+        </div>
+      )}
+
+      {/* Invoice-level exceptions that cannot be fixed by correcting a field —
+          missing documents, rejections and technical failures (review §7). */}
+      {openExceptions.length > 0 && (
+        <Card
+          title={<span className="text-semantic-error">Open exceptions ({openExceptions.length})</span>}
+          pad={false}
+        >
+          <ul className="divide-y divide-line-soft">
+            {openExceptions.map((e) => (
+              <li key={e.id} className="px-4 py-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs font-semibold text-essa-700">{e.code}</span>
+                  <Badge tone="error">{titleCase(e.type)}</Badge>
+                  <span className="text-2xs text-ink-muted">Raised {fmtDateTime(e.createdAt)}</span>
+                </div>
+                <p className="mt-1 text-xs font-medium text-ink">{e.title}</p>
+                <p className="text-xs text-ink-secondary">{e.detail}</p>
+                <div className="mt-2">
+                  <ExceptionActions
+                    exception={e}
+                    onChanged={invalidate}
+                    onAddDocument={hasPerm('INVOICE_EDIT') ? () => setDocModal({ mode: 'add' }) : undefined}
+                  />
+                </div>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
 
       {/* ---------------------------------------------------------- body */}
       <div className={showDoc ? 'grid grid-cols-1 gap-4 xl:grid-cols-5' : 'grid grid-cols-1'}>
         {showDoc && (
           <div className="xl:sticky xl:top-0 xl:col-span-2 xl:h-[calc(100vh-12rem)]">
-            <div className="flex h-full flex-col gap-2">
-              {hasPerm('INVOICE_EDIT') && (
-                <div className="flex justify-end">
-                  <Button size="sm" variant="ghost" onClick={() => setDocModal({ mode: 'add' })}>
-                    <Plus size={13} /> Add document
-                  </Button>
-                </div>
-              )}
-              <div className="min-h-0 flex-1">
-                <DocumentViewer
-                  detail={data}
-                  documents={data.documents.filter((d) => d.status !== 'SUPERSEDED' || selectedDoc === d.id)}
-                  selectedId={selectedDoc}
-                  onSelect={setSelectedDoc}
-                  onReplace={hasPerm('INVOICE_EDIT') ? (doc) => setDocModal({ mode: 'replace', doc }) : undefined}
-                  fields={data.extractedFields}
-                  highlightField={highlightField}
-                />
-              </div>
+            {/* No document drop-down (review): the document shown here follows
+                the document tab selected in Extract & Validate. */}
+            <div className="h-full">
+              <DocumentViewer
+                key={selectedDoc ?? 'first'}
+                detail={data}
+                documents={data.documents.filter((d) => d.status !== 'SUPERSEDED' || selectedDoc === d.id)}
+                selectedId={selectedDoc}
+                onSelect={setSelectedDoc}
+                onReplace={hasPerm('INVOICE_EDIT') ? (doc) => setDocModal({ mode: 'replace', doc }) : undefined}
+                fields={data.extractedFields}
+                highlightField={highlightField}
+              />
             </div>
           </div>
         )}
 
         <div className={showDoc ? 'min-w-0 xl:col-span-3' : 'min-w-0'}>
           <Card>
+            {/* The Approvals tab shows only for Non-PO invoices — PO invoices
+                need no approval. */}
             <Tabs
               tabs={[
                 { key: 'extract', label: 'Extract & Validate' },
                 { key: 'timeline', label: 'Timeline' },
-                { key: 'mapping', label: 'SAP Mapping' },
-                { key: 'exceptions', label: 'Exceptions' },
-                { key: 'approvals', label: 'Approvals' },
-                { key: 'audit', label: 'Audit' },
+                ...(!inv.poNumber ? [{ key: 'approvals', label: 'Approvals' }] : []),
               ]}
-              counts={{ extract: failedChecks, exceptions: openExceptions, approvals: activeSteps }}
-              active={tab}
+              counts={{ extract: failedChecks, approvals: activeSteps }}
+              active={tab === 'approvals' && inv.poNumber ? 'extract' : tab}
               onChange={setTab}
             />
             <div className="mt-3">
@@ -187,17 +247,13 @@ export default function InvoiceDetailPage() {
                 />
               )}
               {tab === 'timeline' && <TimelineTab timeline={data.timeline} />}
-              {tab === 'mapping' && <MappingTab detail={data} />}
-              {tab === 'exceptions' && <ExceptionsTab detail={data} />}
-              {tab === 'approvals' && <ApprovalsTab detail={data} />}
-              {tab === 'audit' && <AuditTab events={data.auditEvents} />}
+              {tab === 'approvals' && !inv.poNumber && <ApprovalsTab detail={data} />}
             </div>
           </Card>
         </div>
       </div>
 
       <DocumentModal state={docModal} onClose={() => setDocModal(null)} detail={data} onDone={invalidate} />
-      <AssignModal open={assignOpen} onClose={() => setAssignOpen(false)} invoiceId={inv.id} onDone={invalidate} />
     </div>
   );
 }
@@ -220,7 +276,7 @@ function DocumentModal({ state, onClose, detail, onDone }: { state: { mode: 'add
         replaceDocumentId: state?.mode === 'replace' ? state.doc?.id : undefined,
       }),
     onSuccess: () => {
-      toast.push({ tone: 'success', title: state?.mode === 'replace' ? 'Document replaced' : 'Document added', detail: 'Affected extraction/validation will re-run automatically.' });
+      toast.push({ tone: 'success', title: state?.mode === 'replace' ? 'Document replaced' : 'Document added', detail: 'Extraction and validation re-run automatically.' });
       setFileName('');
       setDocTypeId('');
       onClose();
@@ -238,7 +294,7 @@ function DocumentModal({ state, onClose, detail, onDone }: { state: { mode: 'add
         <>
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
           <Button loading={submit.isPending} disabled={!fileName.trim() || !effectiveType} onClick={() => submit.mutate()}>
-            Upload to SharePoint
+            Upload
           </Button>
         </>
       }
@@ -246,7 +302,7 @@ function DocumentModal({ state, onClose, detail, onDone }: { state: { mode: 'add
       <div className="space-y-3">
         {state?.mode === 'replace' && (
           <p className="rounded-md bg-canvas p-2.5 text-xs text-ink-secondary">
-            Replacing <span className="font-medium">{state.doc?.fileName}</span> (v{state.doc?.version}). The previous version is retained as superseded for audit, and only affected extraction/validation re-runs.
+            Replacing <span className="font-medium">{state.doc?.fileName}</span> (v{state.doc?.version}). The previous version is kept for audit, and only the affected checks re-run.
           </p>
         )}
         {state?.mode === 'add' && !state.documentTypeId && (
@@ -259,50 +315,10 @@ function DocumentModal({ state, onClose, detail, onDone }: { state: { mode: 'add
             </Select>
           </Field>
         )}
-        <Field label="File name" required hint="Demo environment: the file binary is simulated; metadata and repository references are stored (SharePoint is the document repository).">
+        <Field label="File name" required>
           <Input value={fileName} onChange={(e) => setFileName(e.target.value)} placeholder="e.g. GRN_5000104211_signed.pdf" />
         </Field>
       </div>
-    </Modal>
-  );
-}
-
-function AssignModal({ open, onClose, invoiceId, onDone }: { open: boolean; onClose: () => void; invoiceId: string; onDone: () => void }) {
-  const toast = useToast();
-  const [userId, setUserId] = useState('');
-  const { data: lookups } = useQuery({
-    queryKey: ['lookups'],
-    queryFn: () => api.get<{ users: { id: string; name: string; title: string; enabled: boolean }[] }>('/lookups'),
-  });
-  const assign = useMutation({
-    mutationFn: () => api.post(`/invoices/${invoiceId}/assign`, { userId: userId || undefined }),
-    onSuccess: () => {
-      toast.push({ tone: 'success', title: userId ? 'Invoice assigned' : 'Invoice unassigned' });
-      onClose();
-      onDone();
-    },
-    onError: (e) => toast.push({ tone: 'error', title: 'Assignment failed', detail: e instanceof ApiError ? e.body.message : String(e) }),
-  });
-  return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      title="Assign invoice"
-      footer={
-        <>
-          <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button loading={assign.isPending} onClick={() => assign.mutate()}>Save</Button>
-        </>
-      }
-    >
-      <Field label="Assign to">
-        <Select value={userId} onChange={(e) => setUserId(e.target.value)} className="w-full">
-          <option value="">Unassigned</option>
-          {lookups?.users.filter((u) => u.enabled).map((u) => (
-            <option key={u.id} value={u.id}>{u.name} — {u.title}</option>
-          ))}
-        </Select>
-      </Field>
     </Modal>
   );
 }

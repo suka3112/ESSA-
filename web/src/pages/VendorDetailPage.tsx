@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ShieldAlert, ShieldCheck } from 'lucide-react';
+import { ShieldAlert, ShieldCheck, Mail, Phone, Landmark, Lock } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
-import { fmtDate, fmtDateTime, fmtMoney, fmtRelative, titleCase } from '@/lib/format';
+import { fmtDate, fmtDateTime, fmtMoney, titleCase } from '@/lib/format';
 import { Badge, Button, Card, ConfirmDialog, DataTable, KeyValue, LoadingState, PageHeader, StatusBadge, useToast, type Column } from '@/components/ui';
 
 interface VendorDetail {
@@ -15,7 +15,7 @@ interface VendorDetail {
   };
   control?: { negativeFlag: boolean; apEnabled: boolean; reason?: string; remarks?: string; updatedByName: string; updatedAt: string };
   history: { id: string; action: string; reason: string; byName: string; at: string }[];
-  purchaseOrders: { poNumber: string; department: string; totalAmount: number; openAmount: number; validTo: string; status: string; poType: string }[];
+  purchaseOrders: { poNumber: string; totalAmount: number; openAmount: number; validTo: string; status: string; poType: string }[];
   invoices: { id: string; invoiceNumber: string; invoiceDate: string; amount: number; currency: string; lifecycle: string; stage: string; categoryName?: string }[];
 }
 
@@ -57,7 +57,7 @@ export default function VendorDetailPage() {
             {c && !c.apEnabled && <Badge tone="warning">AP disabled</Badge>}
           </span>
         }
-        description={`${v.code} · ${v.classification} · ${v.city}, ${v.state} · SAP snapshot synced ${fmtRelative(v.lastSyncAt)}`}
+        description={`${v.code} · ${v.city}, ${v.state}`}
         actions={
           hasPerm('VENDOR_CONTROL') ? (
             <>
@@ -65,7 +65,7 @@ export default function VendorDetailPage() {
                 <ShieldAlert size={14} /> {c?.negativeFlag ? 'Remove negative flag' : 'Mark negative'}
               </Button>
               <Button variant={c?.apEnabled === false ? 'primary' : 'secondary'} size="sm" onClick={() => setConfirm({ field: 'apEnabled', next: !(c?.apEnabled ?? true) })}>
-                <ShieldCheck size={14} /> {c?.apEnabled === false ? 'Enable AP automation' : 'Disable AP automation'}
+                <ShieldCheck size={14} /> {c?.apEnabled === false ? 'Enable EAPA' : 'Disable EAPA'}
               </Button>
             </>
           ) : undefined
@@ -73,33 +73,55 @@ export default function VendorDetailPage() {
       />
 
       <div className="grid gap-4 lg:grid-cols-3">
-        <Card title="SAP master snapshot (read-only)" className="lg:col-span-2">
+        {/* Review, 24 Aug: bank details must be visually separated from the
+            rest of the vendor record so they cannot be misread as ordinary
+            master data, and the read-only nature of the record is stated up
+            front rather than in a footnote. */}
+        <Card title="Vendor Information" className="lg:col-span-2">
+          <p className="mb-3 flex items-start gap-1.5 rounded-md border border-line bg-canvas px-2.5 py-1.5 text-2xs text-ink-muted">
+            <Lock size={12} className="mt-0.5 shrink-0 text-ink-faint" />
+            <span>
+              Read-only. SAP is the vendor master and vendor data is added, changed or removed through the ESSA
+              master-data process. Only the AP control overlay on the right is maintained in this portal.
+            </span>
+          </p>
           <dl className="grid grid-cols-2 gap-x-4 gap-y-3 md:grid-cols-3">
             <KeyValue label="Legal Name">{v.legalName}</KeyValue>
             <KeyValue label="Vendor Code">{v.code}</KeyValue>
             <KeyValue label="SAP Reference"><span className="font-mono text-xs">{v.sapRef}</span></KeyValue>
             <KeyValue label="Address">{v.address}, {v.city}, {v.state}, {v.country}</KeyValue>
-            <KeyValue label="GSTIN"><span className="font-mono text-xs">{v.gstin}</span></KeyValue>
-            <KeyValue label="PAN"><span className="font-mono text-xs">{v.pan}</span></KeyValue>
-            <KeyValue label="Bank">{v.bankName}</KeyValue>
-            <KeyValue label="Account">{v.bankAccountMasked}</KeyValue>
-            <KeyValue label="Payment Terms">{v.paymentTerms}</KeyValue>
-            <KeyValue label="Currency">{v.currency}</KeyValue>
-            <KeyValue label="Company Codes">{v.companyCodes.join(', ')}</KeyValue>
-            <KeyValue label="Contact">{v.email}<br />{v.phone}</KeyValue>
+            <KeyValue label="Tax Number"><span className="font-mono text-xs">{v.gstin}</span></KeyValue>
+            {/* Company code removed — it is ESSA's entity (PO-based), not a vendor attribute. */}
+            <KeyValue label="AP Contact">
+              <span className="flex items-center gap-1.5"><Mail size={12} className="text-essa-600" /> {v.email}</span>
+              <span className="mt-0.5 flex items-center gap-1.5"><Phone size={12} className="text-essa-600" /> {v.phone}</span>
+            </KeyValue>
+            <KeyValue label="Vendor SAP Sync">{fmtDateTime(v.lastSyncAt)}</KeyValue>
           </dl>
-          <p className="mt-3 rounded-md bg-canvas px-2.5 py-1.5 text-2xs text-ink-muted">
-            SAP remains the vendor master source of truth. Add/edit/delete of vendor master data is performed through the ESSA enterprise master-data process — the portal only maintains the AP control overlay below.
-          </p>
+
+          <div className="mt-4 rounded-lg border border-line bg-canvas p-3">
+            <p className="mb-2.5 flex items-center gap-1.5 text-2xs font-semibold uppercase tracking-wide text-ink-secondary">
+              <Landmark size={13} className="text-essa-600" /> Payment details
+            </p>
+            <dl className="grid grid-cols-2 gap-x-4 gap-y-3 md:grid-cols-4">
+              <KeyValue label="Bank">{v.bankName}</KeyValue>
+              <KeyValue label="Account Number"><span className="font-mono text-xs">{v.bankAccountMasked}</span></KeyValue>
+              <KeyValue label="Payment Terms">{v.paymentTerms}</KeyValue>
+              <KeyValue label="Currency">{v.currency}</KeyValue>
+            </dl>
+            <p className="mt-2 text-2xs text-ink-faint">
+              The account number is masked. Payment is always made to the bank account held in the SAP vendor master.
+            </p>
+          </div>
         </Card>
 
         <Card title="Portal AP control overlay">
           <dl className="space-y-3">
-            <KeyValue label="Negative Vendor Flag">{c?.negativeFlag ? <Badge tone="error">Set</Badge> : <Badge tone="success">Not set</Badge>}</KeyValue>
-            <KeyValue label="AP Automation">{c?.apEnabled === false ? <Badge tone="warning">Disabled</Badge> : <Badge tone="success">Enabled</Badge>}</KeyValue>
+            <KeyValue label="Negative Vendor Flag">{c?.negativeFlag ? <Badge tone="error">Enabled</Badge> : <Badge tone="success">Disabled</Badge>}</KeyValue>
+            <KeyValue label="AP Automation Enabled">{c?.apEnabled === false ? <Badge tone="warning">No — EAPA disabled</Badge> : <Badge tone="success">Yes</Badge>}</KeyValue>
             {c?.reason && <KeyValue label="Reason">{c.reason}</KeyValue>}
             {c?.remarks && <KeyValue label="Remarks">{c.remarks}</KeyValue>}
-            <KeyValue label="Last Updated">{c ? `${c.updatedByName} · ${fmtDateTime(c.updatedAt)}` : '—'}</KeyValue>
+            <KeyValue label="Last Status Update">{c ? `${c.updatedByName} · ${fmtDateTime(c.updatedAt)}` : '—'}</KeyValue>
           </dl>
         </Card>
       </div>
@@ -109,11 +131,10 @@ export default function VendorDetailPage() {
           <DataTable
             dense
             columns={[
-              { key: 'po', header: 'PO', render: (p) => <span className="font-medium">{p.poNumber}</span> },
-              { key: 'type', header: 'Type', render: (p) => <Badge tone="neutral">{p.poType}</Badge> },
-              { key: 'dept', header: 'Department', render: (p) => <span className="text-xs">{p.department}</span> },
+              { key: 'po', header: 'PO', sortable: true, value: (p) => p.poNumber, render: (p) => <span className="font-medium">{p.poNumber}</span> },
+              { key: 'type', header: 'Type', sortable: true, value: (p) => p.poType, render: (p) => <Badge tone="neutral">{p.poType}</Badge> },
               { key: 'total', header: 'Value', align: 'right', render: (p) => fmtMoney(p.totalAmount) },
-              { key: 'open', header: 'Open', align: 'right', render: (p) => <span className="font-medium">{fmtMoney(p.openAmount)}</span> },
+              { key: 'open', header: 'Open', align: 'right', sortable: true, value: (p) => p.openAmount, render: (p) => <span className="font-medium">{fmtMoney(p.openAmount)}</span> },
               { key: 'valid', header: 'Valid To', render: (p) => <span className="text-xs">{fmtDate(p.validTo)}</span> },
               { key: 'status', header: 'Status', render: (p) => <StatusBadge value={p.status} /> },
             ] satisfies Column<VendorDetail['purchaseOrders'][0]>[]}
@@ -138,19 +159,7 @@ export default function VendorDetailPage() {
         </Card>
       </div>
 
-      <Card title="Vendor control history (append-only)" pad={false}>
-        <DataTable
-          dense
-          columns={[
-            { key: 'at', header: 'When', render: (h) => <span className="whitespace-nowrap text-xs">{fmtDateTime(h.at)}</span> },
-            { key: 'action', header: 'Action', render: (h) => <StatusBadge value={h.action.includes('NEGATIVE_MARKED') || h.action === 'DISABLED' ? 'FAIL' : 'PASS'} label={titleCase(h.action)} /> },
-            { key: 'by', header: 'By', render: (h) => <span className="text-xs">{h.byName}</span> },
-            { key: 'reason', header: 'Reason', render: (h) => <span className="text-xs text-ink-secondary">{h.reason}</span> },
-          ] satisfies Column<VendorDetail['history'][0]>[]}
-          rows={data.history}
-          rowKey={(h) => h.id}
-        />
-      </Card>
+      {/* Vendor Control History removed (design review) — audit history lives in the Audit Timeline; the PO and invoice lists use the space. */}
 
       <ConfirmDialog
         open={Boolean(confirm)}
@@ -159,7 +168,7 @@ export default function VendorDetailPage() {
         title={
           confirm?.field === 'negativeFlag'
             ? confirm.next ? 'Mark vendor as negative' : 'Remove negative flag'
-            : confirm?.next ? 'Enable AP automation' : 'Disable AP automation'
+            : confirm?.next ? 'Enable EAPA' : 'Disable EAPA'
         }
         tone={confirm?.next && confirm.field === 'negativeFlag' ? 'danger' : 'warning'}
         confirmLabel="Apply control change"

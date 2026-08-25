@@ -35,7 +35,7 @@ integrationRouter.get('/integrations/sap/reference', authorize('SAP_VIEW'), asyn
   const search = String(req.query.search ?? '').toLowerCase();
   if (type === 'PO') {
     let items = db.sapPurchaseOrders;
-    if (search) items = items.filter((p) => [p.poNumber, p.vendorName, p.vendorCode, p.department].some((v) => v.toLowerCase().includes(search)));
+    if (search) items = items.filter((p) => [p.poNumber, p.vendorName, p.vendorCode].some((v) => v.toLowerCase().includes(search)));
     res.json({ items: items.slice(0, 100), total: items.length });
   } else if (type === 'GRN') {
     let items = db.sapGrns;
@@ -136,7 +136,7 @@ integrationRouter.post('/integrations/biometric/push', asyncHandler((req, res) =
     const dup = db.attendanceRecords.some((x) => x.vendorCode === r.vendorCode && x.employeeId === r.employeeId && x.date === r.date);
     if (dup) { duplicates += 1; continue; }
     db.attendanceRecords.push({
-      id: ids.generic('ATT'), batchId, source: source ?? 'ESSA-MIS', site: r.site ?? 'Hazira Plant',
+      id: ids.generic('ATT'), batchId, source: source ?? 'ESSA-MIS', site: r.site ?? 'Luwuk Plant',
       vendorCode: r.vendorCode, employeeId: r.employeeId, employeeName: r.employeeName ?? r.employeeId,
       date: r.date, present: r.present ?? true, hours: r.hours ?? 8, otHours: r.otHours ?? 0,
       mealEligible: r.mealEligible ?? true, pushedAt: nowIso(), status: 'ACCEPTED',
@@ -153,7 +153,7 @@ integrationRouter.post('/integrations/biometric/push', asyncHandler((req, res) =
   markDirty();
   systemAudit({
     eventType: 'BIOMETRIC_BATCH_RECEIVED', category: 'BIOMETRIC', action: 'INGEST',
-    entityType: 'AttendanceBatch', entityId: batchId, module: 'biometric-integration',
+    entityType: 'ATTENDANCE', entityId: batchId, module: 'biometric-integration',
     newValue: { accepted, duplicates, rejected }, correlationId, actorType: 'INTEGRATION',
     actorId: 'essa-mis', actorName: 'ESSA MIS',
   });
@@ -173,7 +173,7 @@ integrationRouter.get('/ingestion/email', authorize('INVOICE_VIEW'), asyncHandle
       ...e,
       invoiceNumber: db.invoices.find((i) => i.id === e.invoiceId)?.invoiceNumber,
     })),
-    mailbox: 'invoice@essa.co.in',
+    mailbox: 'invoice@essa.co.id',
     state: db.integrationHealth.mailboxState,
   });
 }));
@@ -223,7 +223,6 @@ integrationRouter.post('/ingestion/email/simulate', authorize('INVOICE_UPLOAD'),
       categoryId: category.id,
       amount,
       poNumber: db.sapPurchaseOrders.find((p) => p.vendorCode === vendor.code)?.poNumber,
-      department: 'Operations',
       description: 'Service invoice received via AP mailbox (simulated)',
       fileNames: item.attachments.map((a, i) => ({
         fileName: a.fileName,

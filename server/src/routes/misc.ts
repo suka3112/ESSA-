@@ -2,8 +2,12 @@ import { Router } from 'express';
 import { getDb, markDirty } from '../core/store';
 import { asyncHandler, authorize, requireAuth } from '../core/http';
 import { nowIso } from '../core/ids';
+import { currentStatus } from '../core/status';
 
 export const miscRouter = Router();
+
+/** Fallback for role codes with no configured role record: AP_REVIEWER → "Ap Reviewer". */
+const titleCase = (s: string) => s.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
 
 // ---------------------------------------------------------------- dashboard
 miscRouter.get('/dashboard', authorize('DASHBOARD_VIEW'), asyncHandler((req, res) => {
@@ -47,7 +51,16 @@ miscRouter.get('/dashboard', authorize('DASHBOARD_VIEW'), asyncHandler((req, res
   }
 
   const confidences = invoices.map((i) => i.extractionConfidence).filter((c): c is number => c != null);
-  const slaBreaches = invoices.filter((i) => !['POSTED', 'PAID'].includes(i.lifecycle) && (i.slaBreached || i.slaDueAt < now));
+  // The SLA is recomputed from the state the invoice is actually in, so this
+  // list and the "SLA Breached" tile can never disagree with the workbench.
+  const slaBreaches = invoices.filter((i) => i.slaBreached);
+  const openByInvoice = new Map<string, number>();
+  openExceptions.forEach((e) => openByInvoice.set(e.invoiceId, (openByInvoice.get(e.invoiceId) ?? 0) + 1));
+  const statusOf = (i: (typeof invoices)[0]) => currentStatus(i, openByInvoice.get(i.id) ?? 0);
+  const byStatus: Record<string, number> = {};
+  invoices.forEach((i) => { const st = statusOf(i); byStatus[st] = (byStatus[st] ?? 0) + 1; });
+  // Everything the AP team still has to act on: exactly what the work queue lists.
+  const apWorkQueue = invoices.filter((i) => ['Draft', 'Validation'].includes(statusOf(i)));
 
   // Vendor spend (total billed value per vendor)
   const vendorSpendMap = new Map<string, { name: string; amount: number; count: number }>();
@@ -83,10 +96,17 @@ miscRouter.get('/dashboard', authorize('DASHBOARD_VIEW'), asyncHandler((req, res
       posted: byLifecycle.POSTED ?? 0,
       paid: byLifecycle.PAID ?? 0,
       inValidation: (byStage.VALIDATION ?? 0) + (byStage.CLASSIFICATION ?? 0) + (byStage.COMPLETENESS ?? 0) + (byStage.EXTRACTION ?? 0) + (byStage.RECEIVED ?? 0),
+      // Tile counts that the lists can be filtered down to, one for one.
+      apWorkQueue: apWorkQueue.length,
+      approvalPending: byStatus['Approval Pending'] ?? 0,
+      readyToPark: byStatus.Approved ?? 0,
       exceptions: openExceptions.length,
+      invoicesWithExceptions: new Set(openExceptions.map((e) => e.invoiceId)).size,
       pendingApproval: activeSteps.length,
       extractionReview: invoices.filter((i) => i.stage === 'EXTRACTION_REVIEW').length,
       missingDocuments: invoices.filter((i) => i.processingFlag === 'MISSING_DOCUMENTS').length,
+      // Rejected invoices are waiting for the vendor to resubmit (UI/UX review §2).
+      rejected: byStatus.Rejected ?? 0,
       slaBreaches: slaBreaches.length,
       sapErrors: invoices.filter((i) => i.processingFlag === 'SAP_ERROR' || i.processingFlag === 'TECHNICAL_RETRY').length,
       avgConfidence: confidences.length ? Math.round((confidences.reduce((a, b) => a + b, 0) / confidences.length) * 1000) / 10 : null,
@@ -94,6 +114,7 @@ miscRouter.get('/dashboard', authorize('DASHBOARD_VIEW'), asyncHandler((req, res
       myExceptions: openExceptions.filter((e) => e.assignedTo === user.id).length,
     },
     byLifecycle,
+    byStatus,
     byStage,
     byCategory,
     bySource,
@@ -114,10 +135,32 @@ miscRouter.get('/dashboard', authorize('DASHBOARD_VIEW'), asyncHandler((req, res
     }, {}),
     approvalBacklog: activeSteps.map((s) => {
       const inv = db.invoices.find((i) => i.id === s.invoiceId);
+      // Who is this actually sitting with? Prefer the named approver (direct
+      // assignment or DoA resolution); fall back to the step's role queue.
+      const approver = s.assignedTo ? db.users.find((u) => u.id === s.assignedTo) : undefined;
+      const roleName = db.roles.find((r) => r.code === s.role)?.name ?? titleCase(s.role);
       return {
         stepId: s.id, invoiceId: s.invoiceId, invoiceNumber: inv?.invoiceNumber, name: s.name,
-        assignedToName: s.assignedToName, amount: inv?.amount, dueAt: s.dueAt,
-        overdue: Boolean(s.dueAt && s.dueAt < now),
+        stepNo: s.stepNo,
+        assignedToName: s.assignedToName ?? approver?.name,
+        // Job title reads better than the raw role code ("Senior AP Analyst"),
+        // but we always keep the workflow role so the queue case still makes sense.
+        approverTitle: approver?.title,
+        role: s.role, roleName,
+        delegated: Boolean(s.delegatedTo),
+        unassigned: !(s.assignedToName ?? approver?.name),
+        amount: inv?.amount, currency: inv?.currency,
+        // Same single SLA clock as the Approvals screen and the workbench.
+        dueAt: inv?.slaDueAt || s.dueAt,
+        // The approval list is invoice-centric (UI/UX review §9): vendor,
+        // category and the invoice's own state, not workflow internals.
+        vendorName: inv?.vendorName,
+        categoryName: db.categories.find((c) => c.id === inv?.categoryId)?.name,
+        lifecycle: inv?.lifecycle,
+        stage: inv?.stage,
+        processingFlag: inv?.processingFlag ?? null,
+        poNumber: inv?.poNumber,
+        overdue: inv ? Boolean(inv.slaBreached) : Boolean(s.dueAt && s.dueAt < now),
       };
     }).slice(0, 8),
     validationFailures: Object.entries(failedRules).map(([rule, count]) => ({ rule, count })).sort((a, b) => b.count - a.count).slice(0, 6),
@@ -199,12 +242,10 @@ miscRouter.get('/reports', authorize('REPORT_VIEW'), asyncHandler((req, res) => 
   const to = String(req.query.dateTo ?? '2100-01-01');
   const categoryId = String(req.query.categoryId ?? '');
   const vendorCode = String(req.query.vendorCode ?? '');
-  const department = String(req.query.department ?? '');
 
   let invoices = db.invoices.filter((i) => i.receivedAt.slice(0, 10) >= from && i.receivedAt.slice(0, 10) <= to);
   if (categoryId) invoices = invoices.filter((i) => i.categoryId === categoryId);
   if (vendorCode) invoices = invoices.filter((i) => i.vendorCode === vendorCode);
-  if (department) invoices = invoices.filter((i) => i.department === department);
   const invoiceIds = new Set(invoices.map((i) => i.id));
 
   const exceptions = db.exceptions.filter((e) => invoiceIds.has(e.invoiceId));
@@ -268,9 +309,11 @@ miscRouter.get('/lookups', asyncHandler((_req, res) => {
   res.json({
     categories: db.categories,
     documentTypes: db.documentTypes,
-    departments: [...new Set(db.invoices.map((i) => i.department))].sort(),
     users: db.users.map((u) => ({ id: u.id, name: u.name, title: u.title, enabled: u.enabled })),
     vendors: db.vendors.map((v) => ({ code: v.code, name: v.name })),
     activeConfigVersion: db.configVersions.find((c) => c.status === 'ACTIVE'),
+    slaRules: db.slaRules,
+    reminderRules: db.reminderRules,
+    exceptionCodes: db.exceptionCodes,
   });
 }));

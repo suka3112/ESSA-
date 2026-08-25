@@ -59,7 +59,7 @@ export function MappingTab({ detail }: { detail: InvoiceDetail }) {
       key: 'ref', header: 'SAP Reference', render: (r) => (
         <div className="max-w-44">
           <p className="truncate font-medium" title={String(r.referenceValue ?? '')}>
-            {r.referenceValue == null ? <span className="text-ink-faint">—</span> : typeof r.referenceValue === 'number' ? r.referenceValue.toLocaleString('en-IN') : r.referenceValue}
+            {r.referenceValue == null ? <span className="text-ink-faint">—</span> : typeof r.referenceValue === 'number' ? r.referenceValue.toLocaleString('en-US') : r.referenceValue}
           </p>
           <p className="truncate text-2xs text-ink-muted">{r.referenceSource}</p>
         </div>

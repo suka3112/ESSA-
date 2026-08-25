@@ -28,7 +28,6 @@ export function OverviewTab({ detail }: { detail: InvoiceDetail }) {
           <KeyValue label="Tax">{fmtMoney(inv.taxAmount, inv.currency)}</KeyValue>
           <KeyValue label="PO Number">{inv.poNumber ?? '—'}</KeyValue>
           <KeyValue label="Category">{inv.categoryName}</KeyValue>
-          <KeyValue label="Department">{inv.department}</KeyValue>
           <KeyValue label="Company Code">{inv.companyCode}</KeyValue>
           <KeyValue label="Priority"><StatusBadge value={inv.priority} /></KeyValue>
           <KeyValue label="Config Version">{inv.configVersionId}</KeyValue>
@@ -74,7 +73,7 @@ export function OverviewTab({ detail }: { detail: InvoiceDetail }) {
               <KeyValue label="SES">{detail.sapReference.ses.length ? `${detail.sapReference.ses.length} · ${fmtMoney(detail.sapReference.ses.reduce((s, g) => s + g.amount, 0))}` : '—'}</KeyValue>
             </dl>
           ) : (
-            <p className="text-xs text-ink-muted">Non-PO invoice — routed by department confirmation and Delegation of Authority.</p>
+            <p className="text-xs text-ink-muted">Non-PO invoice — there is no purchase order to validate against. It is routed through the approval hierarchy by invoice amount.</p>
           )}
         </Card>
       </div>
@@ -436,7 +435,7 @@ export function ValidationTab({ detail }: { detail: InvoiceDetail }) {
                               {i > 0 && <span className="self-center text-xs font-bold text-ink-faint">=</span>}
                               <div className="min-w-32 rounded-md border border-line bg-white p-2">
                                 <p className="text-2xs font-semibold uppercase tracking-wide text-ink-faint">Operand {o.alias} · {o.source}</p>
-                                <p className="text-sm font-semibold text-ink">{o.value == null ? '—' : typeof o.value === 'number' ? o.value.toLocaleString('en-IN') : o.value}</p>
+                                <p className="text-sm font-semibold text-ink">{o.value == null ? '—' : typeof o.value === 'number' ? o.value.toLocaleString('en-US') : o.value}</p>
                                 <p className="text-2xs text-ink-muted">{o.label}{o.detail ? ` · ${o.detail}` : ''}</p>
                               </div>
                             </div>

@@ -2,10 +2,12 @@ export interface InvoiceDetail {
   invoice: {
     id: string; invoiceNumber: string; vendorCode: string; vendorName: string; categoryId: string; categoryName?: string;
     invoiceDate: string; receivedAt: string; amount: number; subtotal: number; taxAmount: number; currency: string;
-    poNumber?: string; department: string; companyCode: string; source: string; stage: string; lifecycle: string;
+    poNumber?: string; companyCode: string; source: string; stage: string; lifecycle: string;
     processingFlag: string | null; slaDueAt: string; slaBreached: boolean; assignedTo?: string; assignedToName?: string;
     priority: string; configVersionId: string; correlationId: string; description: string; sapDocumentNo?: string;
     paymentStatus?: string; paymentDate?: string; paymentRef?: string; taxReviewRequired: boolean; extractionConfidence?: number;
+    /** Open exceptions on this invoice — drives the status note in the shared vocabulary. */
+    openExceptions?: number;
   };
   vendor?: { code: string; name: string; city: string; gstin: string; paymentTerms: string; sapStatus: string };
   vendorControl?: { negativeFlag: boolean; apEnabled: boolean; reason?: string };

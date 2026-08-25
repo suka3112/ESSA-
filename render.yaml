@@ -1,0 +1,24 @@
+# Render Blueprint - ESSA AP Automation (V2) demo hosting
+# Docs: https://render.com/docs/blueprint-spec
+#
+# One FREE web service runs the API and serves the built web portal from the
+# same process (see server/src/app.ts). No database is required: the embedded
+# demo dataset is seeded automatically on first start.
+services:
+  - type: web
+    name: essa-ap-automation
+    runtime: node
+    plan: free
+    region: singapore
+    branch: main
+    buildCommand: npm install --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/v1/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: 22.12.0
+      - key: NODE_ENV
+        value: production
+      - key: APP_ENV
+        value: DEMO

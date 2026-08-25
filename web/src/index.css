@@ -23,6 +23,14 @@
   .scrollbar-thin::-webkit-scrollbar-thumb {
     @apply rounded-full bg-line-strong;
   }
+  /* Tab strips scroll horizontally behind chevron buttons — no visible bar. */
+  .scrollbar-none {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
 }
 
 :focus-visible {

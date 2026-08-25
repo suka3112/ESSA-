@@ -17,22 +17,22 @@ import { isoAgo, DAY } from '../../core/ids';
 export const CONFIG_VERSIONS: ConfigurationVersion[] = [
   {
     id: 'cfg-1', versionNo: 'v1.0', label: 'Initial AP rollout baseline', status: 'ACTIVE',
-    effectiveFrom: '2026-05-01', createdBy: 'Suresh Iyer', createdAt: isoAgo(120 * DAY),
-    approvedBy: 'Meera Krishnan', approvedAt: isoAgo(105 * DAY),
-    publishedBy: 'Suresh Iyer', publishedAt: isoAgo(103 * DAY),
+    effectiveFrom: '2026-05-01', createdBy: 'Surya Nugraha', createdAt: isoAgo(120 * DAY),
+    approvedBy: 'Maya Puspita', approvedAt: isoAgo(105 * DAY),
+    publishedBy: 'Surya Nugraha', publishedAt: isoAgo(103 * DAY),
     notes: 'Baseline categories, documents, fields, prompts, mappings and rules from the requirement workshops.',
   },
   {
     id: 'cfg-2', versionNo: 'v1.1', label: 'Manpower & catering N-way tightening', status: 'DRAFT',
-    createdBy: 'Suresh Iyer', createdAt: isoAgo(9 * DAY),
+    createdBy: 'Surya Nugraha', createdAt: isoAgo(9 * DAY),
     notes: 'Draft: tighten manpower N-way tolerance to 0.5%, add housekeeping category documents.',
   },
   {
     id: 'cfg-0', versionNo: 'v0.9', label: 'POC pilot configuration', status: 'RETIRED',
     effectiveFrom: '2026-02-01', effectiveTo: '2026-04-30',
-    createdBy: 'Suresh Iyer', createdAt: isoAgo(210 * DAY),
-    approvedBy: 'Meera Krishnan', approvedAt: isoAgo(200 * DAY),
-    publishedBy: 'Suresh Iyer', publishedAt: isoAgo(198 * DAY),
+    createdBy: 'Surya Nugraha', createdAt: isoAgo(210 * DAY),
+    approvedBy: 'Maya Puspita', approvedAt: isoAgo(200 * DAY),
+    publishedBy: 'Surya Nugraha', publishedAt: isoAgo(198 * DAY),
     notes: 'Pilot configuration used during POC. Retired at v1.0 activation.',
   },
 ];
@@ -42,7 +42,7 @@ export const CATEGORIES: InvoiceCategory[] = [
   { id: 'cat-service', code: 'SERVICE', name: 'Service Invoice', description: 'PO/SES backed service invoices with service-entry reconciliation', poBased: true, active: true },
   { id: 'cat-manpower', code: 'MANPOWER', name: 'Manpower Invoice', description: 'Contract manpower with timesheet/manhour/attendance N-way reconciliation', poBased: true, active: true },
   { id: 'cat-catering', code: 'CATERING', name: 'Catering Invoice', description: 'Canteen/catering with meal-count and biometric eligibility checks', poBased: true, active: true },
-  { id: 'cat-nonpo', code: 'NON_PO', name: 'Non-PO Invoice', description: 'Miscellaneous invoices routed by department confirmation and DoA', poBased: false, active: true },
+  { id: 'cat-nonpo', code: 'NON_PO', name: 'Non-PO Invoice', description: 'Invoices without a purchase order, routed through the amount-based approval hierarchy', poBased: false, active: true },
 ];
 
 export const DOCUMENT_TYPES: DocumentType[] = [
@@ -54,10 +54,10 @@ export const DOCUMENT_TYPES: DocumentType[] = [
   { id: 'dt-manhour', code: 'MANHOUR_SUMMARY', name: 'Manhour Summary', purpose: 'Summary of hours worked by resource', defaultExtractionMode: 'EXTRACT_AND_VALIDATE', active: true },
   { id: 'dt-attendance', code: 'ATTENDANCE_SHEET', name: 'Attendance Sheet', purpose: 'Attendance of resources on site', defaultExtractionMode: 'AVAILABILITY_ONLY', active: true },
   { id: 'dt-meal', code: 'MEAL_SUMMARY', name: 'Meal Summary', purpose: 'Daily/monthly meal count summary for catering', defaultExtractionMode: 'EXTRACT_AND_VALIDATE', active: true },
-  { id: 'dt-tax', code: 'TAX_INVOICE', name: 'Tax Document', purpose: 'GST tax invoice / e-invoice copy', defaultExtractionMode: 'AVAILABILITY_ONLY', active: true },
+  { id: 'dt-tax', code: 'TAX_INVOICE', name: 'Tax Document', purpose: 'Tax invoice (Faktur Pajak) copy', defaultExtractionMode: 'AVAILABILITY_ONLY', active: true },
   { id: 'dt-challan', code: 'DELIVERY_CHALLAN', name: 'Delivery Challan', purpose: 'Delivery evidence accompanying material shipments', defaultExtractionMode: 'AVAILABILITY_ONLY', active: true },
   { id: 'dt-support', code: 'SUPPORTING_DOC', name: 'Supporting Document', purpose: 'Other supporting documents (optional)', defaultExtractionMode: 'AVAILABILITY_ONLY', active: true },
-  { id: 'dt-dept', code: 'DEPT_CONFIRMATION', name: 'Department Confirmation', purpose: 'Department confirmation for Non-PO invoices', defaultExtractionMode: 'AVAILABILITY_ONLY', active: true },
+  { id: 'dt-dept', code: 'HCIS_CLEARING', name: 'HCIS Clearing Journal', purpose: 'HCIS / Darwinbox clearing journal backing a Non-PO invoice (BPD §10.5)', defaultExtractionMode: 'AVAILABILITY_ONLY', active: true },
 ];
 
 const cd = (
@@ -133,7 +133,7 @@ function invoiceHeaderFields(categoryId: string, poBased: boolean): DocumentFiel
     fld(categoryId, 'dt-invoice', 'INVOICE_DATE', 'Invoice Date', 'DATE', true, { sapMapped: true }),
     fld(categoryId, 'dt-invoice', 'VENDOR_NAME', 'Vendor Name', 'TEXT', true, { sapMapped: true }),
     fld(categoryId, 'dt-invoice', 'VENDOR_CODE', 'Vendor Code', 'CODE', true, { sapMapped: true }),
-    fld(categoryId, 'dt-invoice', 'VENDOR_GSTIN', 'Vendor GSTIN', 'CODE', false),
+    fld(categoryId, 'dt-invoice', 'VENDOR_TAX_NUMBER', 'Vendor Tax Number', 'CODE', false),
     fld(categoryId, 'dt-invoice', 'INVOICE_AMOUNT', 'Invoice Amount', 'CURRENCY', true, { sapMapped: true }),
     fld(categoryId, 'dt-invoice', 'INVOICE_SUBTOTAL', 'Invoice Subtotal', 'CURRENCY', true, { sapMapped: true }),
     fld(categoryId, 'dt-invoice', 'TAX_AMOUNT', 'Tax Amount', 'CURRENCY', true, { sapMapped: true }),
@@ -176,7 +176,7 @@ export const DOCUMENT_FIELDS: DocumentField[] = [
   fld('cat-catering', 'dt-meal', 'PERIOD_TO', 'Period To', 'DATE', false),
 
   ...invoiceHeaderFields('cat-nonpo', false),
-  fld('cat-nonpo', 'dt-invoice', 'DEPARTMENT', 'Charging Department', 'TEXT', true),
+  fld('cat-nonpo', 'dt-invoice', 'COST_CENTER', 'Cost Centre', 'TEXT', true),
 ];
 
 // ---------------- prompts & profiles ----------------
@@ -193,7 +193,7 @@ const prompt = (id: string, documentTypeId: string, name: string, focus: string)
   confidenceThreshold: 0.7,
   effectiveDate: '2026-05-01',
   testSampleCount: 6,
-  createdBy: 'Suresh Iyer',
+  createdBy: 'Surya Nugraha',
   createdAt: isoAgo(120 * DAY),
 });
 
@@ -236,7 +236,7 @@ export const FIELD_MAPPINGS: FieldMapping[] = [
     map(cat, 'dt-invoice', 'PO_NUMBER', 'PO Number', 'EKPO-EBELN', 'Purchase Order Number', 'EXACT_MATCH', 'Exact'),
     map(cat, 'dt-invoice', 'INVOICE_AMOUNT', 'Invoice Amount', 'BSEG-WRBTR', 'Amount in Doc. Currency', 'AMOUNT_MATCH', 'Diff <= 2%'),
     map(cat, 'dt-invoice', 'INVOICE_SUBTOTAL', 'Invoice Subtotal', 'BSEG-NETWR', 'Net Value', 'AMOUNT_MATCH', 'Diff <= 2%'),
-    map(cat, 'dt-invoice', 'CURRENCY', 'Currency', 'BKPF-WAERS', 'Currency Key', 'LIST_MATCH', 'INR | USD'),
+    map(cat, 'dt-invoice', 'CURRENCY', 'Currency', 'BKPF-WAERS', 'Currency Key', 'LIST_MATCH', 'IDR | USD'),
   ]),
   map('cat-material', 'dt-grn', 'GRN_NUMBER', 'GRN Number', 'MSEG-MBLNR', 'Material Document', 'EXACT_MATCH', 'Exact', false),
   map('cat-service', 'dt-ses', 'SES_NUMBER', 'SES Number', 'ESSR-LBLNI', 'Service Entry Sheet', 'EXACT_MATCH', 'Exact', false),
@@ -270,21 +270,21 @@ const RULE_SPECS: RuleSpec[] = [
     operands: [op('A', 'Invoice Date', 'DOCUMENT_FIELD', { documentTypeCode: 'INVOICE', fieldCode: 'INVOICE_DATE', sequence: 1 })],
   },
   {
-    rule: { id: 'rule-glb-003', ruleCode: 'R-GLB-003', ruleName: 'Vendor matches SAP master', description: 'Extracted vendor code must exactly match the SAP vendor master snapshot.', scope: 'GLOBAL', ruleType: 'EXACT_MATCH', severity: 'ERROR', blocking: true, overrideAllowed: true, overrideRole: 'AP_MANAGER', priority: 12 },
+    rule: { id: 'rule-glb-003', ruleCode: 'R-GLB-003', ruleName: 'Vendor matches SAP master', description: 'Extracted vendor code must exactly match the SAP vendor master snapshot.', scope: 'GLOBAL', ruleType: 'EXACT_MATCH', severity: 'ERROR', blocking: true, overrideAllowed: true, overrideRole: 'AP_REVIEWER', priority: 12 },
     operands: [
       op('A', 'Invoice Vendor Code', 'DOCUMENT_FIELD', { documentTypeCode: 'INVOICE', fieldCode: 'VENDOR_CODE', sequence: 1 }),
       op('B', 'SAP Vendor Code', 'SAP', { sapEntity: 'VENDOR', sapField: 'CODE', sequence: 2 }),
     ],
   },
   {
-    rule: { id: 'rule-glb-004', ruleCode: 'R-GLB-004', ruleName: 'Currency in allowed list', description: 'Invoice currency must be an approved transaction currency.', scope: 'GLOBAL', ruleType: 'LIST_MEMBERSHIP', severity: 'ERROR', blocking: true, overrideAllowed: true, overrideRole: 'AP_MANAGER', priority: 13 },
+    rule: { id: 'rule-glb-004', ruleCode: 'R-GLB-004', ruleName: 'Currency in allowed list', description: 'Invoice currency must be an approved transaction currency.', scope: 'GLOBAL', ruleType: 'LIST_MEMBERSHIP', severity: 'ERROR', blocking: true, overrideAllowed: true, overrideRole: 'AP_REVIEWER', priority: 13 },
     operands: [
       op('A', 'Invoice Currency', 'DOCUMENT_FIELD', { documentTypeCode: 'INVOICE', fieldCode: 'CURRENCY', sequence: 1 }),
-      op('B', 'Allowed currencies', 'CONFIG', { constantValue: 'INR|USD', sequence: 2 }),
+      op('B', 'Allowed currencies', 'CONFIG', { constantValue: 'IDR|USD', sequence: 2 }),
     ],
   },
   {
-    rule: { id: 'rule-glb-005', ruleCode: 'R-GLB-005', ruleName: 'Totals arithmetic (subtotal + tax = total)', description: 'Invoice amount must equal subtotal plus tax within 0.5%.', scope: 'GLOBAL', ruleType: 'CUSTOM', handlerKey: 'TOTALS_ARITHMETIC', handlerParams: { tolerancePct: 0.5 }, severity: 'ERROR', blocking: true, overrideAllowed: true, overrideRole: 'AP_MANAGER', priority: 14 },
+    rule: { id: 'rule-glb-005', ruleCode: 'R-GLB-005', ruleName: 'Totals arithmetic (subtotal + tax = total)', description: 'Invoice amount must equal subtotal plus tax within 0.5%.', scope: 'GLOBAL', ruleType: 'CUSTOM', handlerKey: 'TOTALS_ARITHMETIC', handlerParams: { tolerancePct: 0.5 }, severity: 'ERROR', blocking: true, overrideAllowed: true, overrideRole: 'AP_REVIEWER', priority: 14 },
     operands: [
       op('TOTAL', 'Invoice Amount', 'DOCUMENT_FIELD', { documentTypeCode: 'INVOICE', fieldCode: 'INVOICE_AMOUNT', sequence: 1 }),
       op('SUBTOTAL', 'Invoice Subtotal', 'DOCUMENT_FIELD', { documentTypeCode: 'INVOICE', fieldCode: 'INVOICE_SUBTOTAL', sequence: 2 }),
@@ -308,21 +308,21 @@ const RULE_SPECS: RuleSpec[] = [
     ],
   },
   {
-    rule: { id: 'rule-mat-003', ruleCode: 'R-MAT-003', ruleName: 'PO vendor matches invoice vendor', description: 'The PO vendor and invoice vendor must be identical.', scope: 'CATEGORY', categoryId: 'cat-material', ruleType: 'EXACT_MATCH', severity: 'ERROR', blocking: true, overrideAllowed: true, overrideRole: 'AP_MANAGER', priority: 22 },
+    rule: { id: 'rule-mat-003', ruleCode: 'R-MAT-003', ruleName: 'PO vendor matches invoice vendor', description: 'The PO vendor and invoice vendor must be identical.', scope: 'CATEGORY', categoryId: 'cat-material', ruleType: 'EXACT_MATCH', severity: 'ERROR', blocking: true, overrideAllowed: true, overrideRole: 'AP_REVIEWER', priority: 22 },
     operands: [
       op('A', 'Invoice Vendor', 'DOCUMENT_FIELD', { documentTypeCode: 'INVOICE', fieldCode: 'VENDOR_CODE', sequence: 1 }),
       op('B', 'PO Vendor', 'SAP', { sapEntity: 'PO', sapField: 'VENDOR_CODE', sequence: 2 }),
     ],
   },
   {
-    rule: { id: 'rule-mat-004', ruleCode: 'R-MAT-004', ruleName: 'Invoice within PO open value', description: 'Invoice subtotal must not exceed the open (un-invoiced) PO value.', scope: 'CATEGORY', categoryId: 'cat-material', ruleType: 'AMOUNT_TOLERANCE', comparator: 'LEFT_LTE_RIGHT', toleranceType: 'PERCENT', toleranceValue: 0, severity: 'ERROR', blocking: true, overrideAllowed: true, overrideRole: 'AP_MANAGER', priority: 23 },
+    rule: { id: 'rule-mat-004', ruleCode: 'R-MAT-004', ruleName: 'Invoice within PO open value', description: 'Invoice subtotal must not exceed the open (un-invoiced) PO value.', scope: 'CATEGORY', categoryId: 'cat-material', ruleType: 'AMOUNT_TOLERANCE', comparator: 'LEFT_LTE_RIGHT', toleranceType: 'PERCENT', toleranceValue: 0, severity: 'ERROR', blocking: true, overrideAllowed: true, overrideRole: 'AP_REVIEWER', priority: 23 },
     operands: [
       op('A', 'Invoice Subtotal', 'DOCUMENT_FIELD', { documentTypeCode: 'INVOICE', fieldCode: 'INVOICE_SUBTOTAL', sequence: 1 }),
       op('B', 'PO Open Amount', 'SAP', { sapEntity: 'PO', sapField: 'OPEN_AMOUNT', sequence: 2 }),
     ],
   },
   {
-    rule: { id: 'rule-mat-005', ruleCode: 'R-MAT-005', ruleName: '3-way match: Invoice = PO = GRN', description: 'Invoice subtotal, matched PO receipt value and GRN value must reconcile within 2%.', scope: 'CROSS_DOCUMENT', categoryId: 'cat-material', ruleType: 'N_WAY', comparator: 'DIFF_WITHIN_TOLERANCE', toleranceType: 'PERCENT', toleranceValue: 2, severity: 'ERROR', blocking: true, overrideAllowed: true, overrideRole: 'AP_MANAGER', priority: 24 },
+    rule: { id: 'rule-mat-005', ruleCode: 'R-MAT-005', ruleName: '3-way match: Invoice = PO = GRN', description: 'Invoice subtotal, matched PO receipt value and GRN value must reconcile within 2%.', scope: 'CROSS_DOCUMENT', categoryId: 'cat-material', ruleType: 'N_WAY', comparator: 'DIFF_WITHIN_TOLERANCE', toleranceType: 'PERCENT', toleranceValue: 2, severity: 'ERROR', blocking: true, overrideAllowed: true, overrideRole: 'AP_REVIEWER', priority: 24 },
     operands: [
       op('A', 'Invoice Subtotal', 'DOCUMENT_FIELD', { documentTypeCode: 'INVOICE', fieldCode: 'INVOICE_SUBTOTAL', sequence: 1 }),
       op('B', 'GRN Value (SUM)', 'SAP', { sapEntity: 'GRN', sapField: 'AMOUNT', aggregation: 'SUM', sequence: 2 }),
@@ -330,14 +330,14 @@ const RULE_SPECS: RuleSpec[] = [
   },
   // ---- Service ----
   {
-    rule: { id: 'rule-srv-001', ruleCode: 'R-SRV-001', ruleName: '3-way match: Invoice = PO = SES', description: 'Invoice subtotal must reconcile with accepted SES value within 2%.', scope: 'CROSS_DOCUMENT', categoryId: 'cat-service', ruleType: 'N_WAY', comparator: 'DIFF_WITHIN_TOLERANCE', toleranceType: 'PERCENT', toleranceValue: 2, severity: 'ERROR', blocking: true, overrideAllowed: true, overrideRole: 'AP_MANAGER', priority: 30 },
+    rule: { id: 'rule-srv-001', ruleCode: 'R-SRV-001', ruleName: '3-way match: Invoice = PO = SES', description: 'Invoice subtotal must reconcile with accepted SES value within 2%.', scope: 'CROSS_DOCUMENT', categoryId: 'cat-service', ruleType: 'N_WAY', comparator: 'DIFF_WITHIN_TOLERANCE', toleranceType: 'PERCENT', toleranceValue: 2, severity: 'ERROR', blocking: true, overrideAllowed: true, overrideRole: 'AP_REVIEWER', priority: 30 },
     operands: [
       op('A', 'Invoice Subtotal', 'DOCUMENT_FIELD', { documentTypeCode: 'INVOICE', fieldCode: 'INVOICE_SUBTOTAL', sequence: 1 }),
       op('B', 'SES Accepted Value (SUM)', 'SAP', { sapEntity: 'SES', sapField: 'AMOUNT', aggregation: 'SUM', sequence: 2 }),
     ],
   },
   {
-    rule: { id: 'rule-srv-002', ruleCode: 'R-SRV-002', ruleName: 'Invoice within PO open value', description: 'Service invoice subtotal must not exceed open PO value.', scope: 'CATEGORY', categoryId: 'cat-service', ruleType: 'AMOUNT_TOLERANCE', comparator: 'LEFT_LTE_RIGHT', toleranceType: 'PERCENT', toleranceValue: 0, severity: 'ERROR', blocking: true, overrideAllowed: true, overrideRole: 'AP_MANAGER', priority: 31 },
+    rule: { id: 'rule-srv-002', ruleCode: 'R-SRV-002', ruleName: 'Invoice within PO open value', description: 'Service invoice subtotal must not exceed open PO value.', scope: 'CATEGORY', categoryId: 'cat-service', ruleType: 'AMOUNT_TOLERANCE', comparator: 'LEFT_LTE_RIGHT', toleranceType: 'PERCENT', toleranceValue: 0, severity: 'ERROR', blocking: true, overrideAllowed: true, overrideRole: 'AP_REVIEWER', priority: 31 },
     operands: [
       op('A', 'Invoice Subtotal', 'DOCUMENT_FIELD', { documentTypeCode: 'INVOICE', fieldCode: 'INVOICE_SUBTOTAL', sequence: 1 }),
       op('B', 'PO Open Amount', 'SAP', { sapEntity: 'PO', sapField: 'OPEN_AMOUNT', sequence: 2 }),
@@ -352,7 +352,7 @@ const RULE_SPECS: RuleSpec[] = [
   },
   // ---- Manpower ----
   {
-    rule: { id: 'rule-mnp-001', ruleCode: 'R-MNP-001', ruleName: '4-way manhours: Timesheet = Summary = SES = Biometric', description: 'Timesheet hours, manhour summary, SES accepted manhours and biometric attendance hours must reconcile within 1%.', scope: 'CROSS_DOCUMENT', categoryId: 'cat-manpower', ruleType: 'N_WAY', comparator: 'DIFF_WITHIN_TOLERANCE', toleranceType: 'PERCENT', toleranceValue: 1, severity: 'ERROR', blocking: true, overrideAllowed: true, overrideRole: 'AP_MANAGER', priority: 40 },
+    rule: { id: 'rule-mnp-001', ruleCode: 'R-MNP-001', ruleName: '4-way manhours: Timesheet = Summary = SES = Biometric', description: 'Timesheet hours, manhour summary, SES accepted manhours and biometric attendance hours must reconcile within 1%.', scope: 'CROSS_DOCUMENT', categoryId: 'cat-manpower', ruleType: 'N_WAY', comparator: 'DIFF_WITHIN_TOLERANCE', toleranceType: 'PERCENT', toleranceValue: 1, severity: 'ERROR', blocking: true, overrideAllowed: true, overrideRole: 'AP_REVIEWER', priority: 40 },
     operands: [
       op('A', 'Timesheet Hours', 'DOCUMENT_FIELD', { documentTypeCode: 'TIMESHEET', fieldCode: 'TOTAL_HOURS', sequence: 1 }),
       op('B', 'Manhour Summary Hours', 'DOCUMENT_FIELD', { documentTypeCode: 'MANHOUR_SUMMARY', fieldCode: 'TOTAL_HOURS', sequence: 2 }),
@@ -361,14 +361,14 @@ const RULE_SPECS: RuleSpec[] = [
     ],
   },
   {
-    rule: { id: 'rule-mnp-002', ruleCode: 'R-MNP-002', ruleName: 'Overtime within cap', description: 'Overtime hours must not exceed 20% of regular hours (contract cap).', scope: 'CATEGORY', categoryId: 'cat-manpower', ruleType: 'CUSTOM', handlerKey: 'MANPOWER_OT_CAP', handlerParams: { capPct: 20 }, severity: 'WARNING', blocking: false, overrideAllowed: true, overrideRole: 'AP_MANAGER', priority: 41 },
+    rule: { id: 'rule-mnp-002', ruleCode: 'R-MNP-002', ruleName: 'Overtime within cap', description: 'Overtime hours must not exceed 20% of regular hours (contract cap).', scope: 'CATEGORY', categoryId: 'cat-manpower', ruleType: 'CUSTOM', handlerKey: 'MANPOWER_OT_CAP', handlerParams: { capPct: 20 }, severity: 'WARNING', blocking: false, overrideAllowed: true, overrideRole: 'AP_REVIEWER', priority: 41 },
     operands: [
       op('REGULAR_HOURS', 'Regular Hours', 'DOCUMENT_FIELD', { documentTypeCode: 'MANHOUR_SUMMARY', fieldCode: 'TOTAL_HOURS', sequence: 1 }),
       op('OT_HOURS', 'Overtime Hours', 'DOCUMENT_FIELD', { documentTypeCode: 'MANHOUR_SUMMARY', fieldCode: 'OT_HOURS', sequence: 2 }),
     ],
   },
   {
-    rule: { id: 'rule-mnp-003', ruleCode: 'R-MNP-003', ruleName: 'Invoice within PO open value', description: 'Manpower invoice subtotal must not exceed open PO value.', scope: 'CATEGORY', categoryId: 'cat-manpower', ruleType: 'AMOUNT_TOLERANCE', comparator: 'LEFT_LTE_RIGHT', toleranceType: 'PERCENT', toleranceValue: 0, severity: 'ERROR', blocking: true, overrideAllowed: true, overrideRole: 'AP_MANAGER', priority: 42 },
+    rule: { id: 'rule-mnp-003', ruleCode: 'R-MNP-003', ruleName: 'Invoice within PO open value', description: 'Manpower invoice subtotal must not exceed open PO value.', scope: 'CATEGORY', categoryId: 'cat-manpower', ruleType: 'AMOUNT_TOLERANCE', comparator: 'LEFT_LTE_RIGHT', toleranceType: 'PERCENT', toleranceValue: 0, severity: 'ERROR', blocking: true, overrideAllowed: true, overrideRole: 'AP_REVIEWER', priority: 42 },
     operands: [
       op('A', 'Invoice Subtotal', 'DOCUMENT_FIELD', { documentTypeCode: 'INVOICE', fieldCode: 'INVOICE_SUBTOTAL', sequence: 1 }),
       op('B', 'PO Open Amount', 'SAP', { sapEntity: 'PO', sapField: 'OPEN_AMOUNT', sequence: 2 }),
@@ -376,14 +376,14 @@ const RULE_SPECS: RuleSpec[] = [
   },
   // ---- Catering ----
   {
-    rule: { id: 'rule-cat-001', ruleCode: 'R-CAT-001', ruleName: 'Billed meals within biometric eligibility', description: 'Billed meal count must not exceed biometric-eligible headcount plus 5% guest allowance.', scope: 'CROSS_DOCUMENT', categoryId: 'cat-catering', ruleType: 'CUSTOM', handlerKey: 'CATERING_MEAL_ELIGIBILITY', handlerParams: { guestAllowancePct: 5 }, severity: 'ERROR', blocking: true, overrideAllowed: true, overrideRole: 'AP_MANAGER', priority: 50 },
+    rule: { id: 'rule-cat-001', ruleCode: 'R-CAT-001', ruleName: 'Billed meals within biometric eligibility', description: 'Billed meal count must not exceed biometric-eligible headcount plus 5% guest allowance.', scope: 'CROSS_DOCUMENT', categoryId: 'cat-catering', ruleType: 'CUSTOM', handlerKey: 'CATERING_MEAL_ELIGIBILITY', handlerParams: { guestAllowancePct: 5 }, severity: 'ERROR', blocking: true, overrideAllowed: true, overrideRole: 'AP_REVIEWER', priority: 50 },
     operands: [
       op('BILLED_MEALS', 'Billed Meal Count', 'DOCUMENT_FIELD', { documentTypeCode: 'MEAL_SUMMARY', fieldCode: 'MEAL_COUNT', sequence: 1 }),
       op('ELIGIBLE_MEALS', 'Biometric Eligible Meals', 'BIOMETRIC', { fieldCode: 'MEAL_COUNT', aggregation: 'SUM', sequence: 2 }),
     ],
   },
   {
-    rule: { id: 'rule-cat-002', ruleCode: 'R-CAT-002', ruleName: 'Meal arithmetic: count × rate = subtotal', description: 'Billed meal count multiplied by the contract rate must equal the invoice subtotal within 1%.', scope: 'CROSS_DOCUMENT', categoryId: 'cat-catering', ruleType: 'CUSTOM', handlerKey: 'MEAL_ARITHMETIC', handlerParams: { tolerancePct: 1 }, severity: 'ERROR', blocking: true, overrideAllowed: true, overrideRole: 'AP_MANAGER', priority: 51 },
+    rule: { id: 'rule-cat-002', ruleCode: 'R-CAT-002', ruleName: 'Meal arithmetic: count × rate = subtotal', description: 'Billed meal count multiplied by the contract rate must equal the invoice subtotal within 1%.', scope: 'CROSS_DOCUMENT', categoryId: 'cat-catering', ruleType: 'CUSTOM', handlerKey: 'MEAL_ARITHMETIC', handlerParams: { tolerancePct: 1 }, severity: 'ERROR', blocking: true, overrideAllowed: true, overrideRole: 'AP_REVIEWER', priority: 51 },
     operands: [
       op('MEALS', 'Billed Meal Count', 'DOCUMENT_FIELD', { documentTypeCode: 'MEAL_SUMMARY', fieldCode: 'MEAL_COUNT', sequence: 1 }),
       op('RATE', 'Rate per Meal', 'DOCUMENT_FIELD', { documentTypeCode: 'MEAL_SUMMARY', fieldCode: 'UNIT_RATE', sequence: 2 }),
@@ -392,11 +392,11 @@ const RULE_SPECS: RuleSpec[] = [
   },
   // ---- Non-PO ----
   {
-    rule: { id: 'rule-npo-001', ruleCode: 'R-NPO-001', ruleName: 'Charging department captured', description: 'Non-PO invoices require a charging department for DoA routing.', scope: 'CATEGORY', categoryId: 'cat-nonpo', ruleType: 'PRESENCE', severity: 'ERROR', blocking: true, overrideAllowed: false, priority: 60 },
-    operands: [op('A', 'Charging Department', 'DOCUMENT_FIELD', { documentTypeCode: 'INVOICE', fieldCode: 'DEPARTMENT', sequence: 1 })],
+    rule: { id: 'rule-npo-001', ruleCode: 'R-NPO-001', ruleName: 'HCIS clearing reference captured', description: 'Non-PO invoices must carry the HCIS clearing reference so the approval hierarchy can route them.', scope: 'CATEGORY', categoryId: 'cat-nonpo', ruleType: 'PRESENCE', severity: 'ERROR', blocking: true, overrideAllowed: false, priority: 60 },
+    operands: [op('A', 'Cost Centre', 'DOCUMENT_FIELD', { documentTypeCode: 'INVOICE', fieldCode: 'COST_CENTER', sequence: 1 })],
   },
   {
-    rule: { id: 'rule-npo-002', ruleCode: 'R-NPO-002', ruleName: 'Non-PO amount within policy limit', description: 'Non-PO invoices above INR 25,00,000 require special procurement approval.', scope: 'CATEGORY', categoryId: 'cat-nonpo', ruleType: 'RANGE', severity: 'WARNING', blocking: false, overrideAllowed: true, overrideRole: 'AP_MANAGER', priority: 61 },
+    rule: { id: 'rule-npo-002', ruleCode: 'R-NPO-002', ruleName: 'Non-PO amount within policy limit', description: 'Non-PO invoices above IDR 2,500,000 require special procurement approval.', scope: 'CATEGORY', categoryId: 'cat-nonpo', ruleType: 'RANGE', severity: 'WARNING', blocking: false, overrideAllowed: true, overrideRole: 'AP_REVIEWER', priority: 61 },
     operands: [
       op('A', 'Invoice Amount', 'DOCUMENT_FIELD', { documentTypeCode: 'INVOICE', fieldCode: 'INVOICE_AMOUNT', sequence: 1 }),
       op('MIN', 'Minimum', 'CONFIG', { constantValue: 0, sequence: 2 }),
@@ -420,24 +420,24 @@ export const RULE_OPERANDS: RuleOperand[] = RULE_SPECS.flatMap((s) =>
 export const WORKFLOW_DEFINITIONS: WorkflowDefinition[] = [
   {
     id: 'wf-po', configVersionId: 'cfg-1', code: 'WF-PO-STD', name: 'PO Invoice Approval', version: 'v1.0',
-    description: 'Standard PO-based approval: AP review, DoA department approval, tax review for qualifying amounts, manager approval for high values.',
+    description: 'PO based: AP review, finance exception approval where needed, tax review for service invoices, then SAP parking.',
     status: 'ACTIVE',
     steps: [
       { stepNo: 1, name: 'AP Review', role: 'AP_REVIEWER', approverType: 'ROLE', slaHours: 24, notify: true },
-      { stepNo: 2, name: 'Department Approval (DoA)', role: 'AP_APPROVER', approverType: 'DOA', slaHours: 48, notify: true, escalationTo: 'AP_MANAGER' },
+      { stepNo: 2, name: 'Finance Exception Approval', role: 'AP_REVIEWER', approverType: 'ROLE', slaHours: 48, notify: true, escalationTo: 'AP_REVIEWER' },
       { stepNo: 3, name: 'Tax Review', role: 'TAX_REVIEWER', approverType: 'ROLE', taxStep: true, slaHours: 24, notify: true },
-      { stepNo: 4, name: 'AP Manager Approval', role: 'AP_MANAGER', approverType: 'ROLE', amountThresholdMin: 2_500_000, slaHours: 24, notify: true },
+      { stepNo: 4, name: 'Final Approval', role: 'AP_REVIEWER', approverType: 'ROLE', amountThresholdMin: 2_500_000, slaHours: 24, notify: true },
     ],
   },
   {
     id: 'wf-nonpo', configVersionId: 'cfg-1', code: 'WF-NONPO', name: 'Non-PO Invoice Approval', version: 'v1.0',
-    description: 'Non-PO routing: AP review, department confirmation via DoA matrix, tax review, manager approval.',
+    description: 'Non-PO: AP review, then the amount-based approval hierarchy, tax review for service invoices, and a final approval.',
     status: 'ACTIVE', categoryId: 'cat-nonpo',
     steps: [
       { stepNo: 1, name: 'AP Review', role: 'AP_REVIEWER', approverType: 'ROLE', slaHours: 24, notify: true },
-      { stepNo: 2, name: 'Department Confirmation (DoA)', role: 'AP_APPROVER', approverType: 'DOA', slaHours: 48, notify: true, escalationTo: 'AP_MANAGER' },
+      { stepNo: 2, name: 'Approval Hierarchy', role: 'AP_REVIEWER', approverType: 'DOA', slaHours: 48, notify: true, escalationTo: 'AP_REVIEWER' },
       { stepNo: 3, name: 'Tax Review', role: 'TAX_REVIEWER', approverType: 'ROLE', taxStep: true, slaHours: 24, notify: true },
-      { stepNo: 4, name: 'AP Manager Approval', role: 'AP_MANAGER', approverType: 'ROLE', amountThresholdMin: 1_000_000, slaHours: 24, notify: true },
+      { stepNo: 4, name: 'Final Approval', role: 'AP_REVIEWER', approverType: 'ROLE', amountThresholdMin: 1_000_000, slaHours: 24, notify: true },
     ],
   },
 ];
@@ -449,8 +449,8 @@ export const NOTIFICATION_RULES: NotificationRule[] = [
   { id: 'nr-4', configVersionId: 'cfg-1', event: 'APPROVAL_OVERDUE', label: 'Approval overdue', channels: ['IN_APP', 'TEAMS'], recipients: 'Approver + escalation', template: 'Approval for {invoiceNumber} is overdue (SLA {sla}h).', active: true },
   { id: 'nr-5', configVersionId: 'cfg-1', event: 'INVOICE_APPROVED', label: 'Invoice approved', channels: ['IN_APP'], recipients: 'AP Team', template: '{invoiceNumber} fully approved and queued for SAP handoff.', active: true },
   { id: 'nr-6', configVersionId: 'cfg-1', event: 'INVOICE_REJECTED', label: 'Invoice rejected', channels: ['IN_APP', 'EMAIL'], recipients: 'AP Team + requester', template: '{invoiceNumber} rejected at {step}: {reason}.', active: true },
-  { id: 'nr-7', configVersionId: 'cfg-1', event: 'SAP_FAILURE', label: 'SAP integration failure', channels: ['IN_APP', 'EMAIL'], recipients: 'Support + AP Manager', template: 'SAP handoff for {invoiceNumber} failed: {error}.', active: true },
+  { id: 'nr-7', configVersionId: 'cfg-1', event: 'SAP_FAILURE', label: 'SAP integration failure', channels: ['IN_APP', 'EMAIL'], recipients: 'Support + AP Supervisor', template: 'SAP handoff for {invoiceNumber} failed: {error}.', active: true },
   { id: 'nr-8', configVersionId: 'cfg-1', event: 'SAP_POSTED', label: 'Invoice posted', channels: ['IN_APP'], recipients: 'AP Team', template: '{invoiceNumber} posted in SAP as {sapDocumentNo}.', active: true },
   { id: 'nr-9', configVersionId: 'cfg-1', event: 'INVOICE_PAID', label: 'Invoice paid', channels: ['IN_APP', 'EMAIL'], recipients: 'Vendor communication queue', template: 'Payment released for {invoiceNumber} ({paymentRef}).', active: true },
-  { id: 'nr-10', configVersionId: 'cfg-1', event: 'CONFIG_PUBLISHED', label: 'Configuration published', channels: ['IN_APP', 'EMAIL'], recipients: 'Admins + AP Manager', template: 'Configuration {version} published, effective {effectiveFrom}.', active: true },
+  { id: 'nr-10', configVersionId: 'cfg-1', event: 'CONFIG_PUBLISHED', label: 'Configuration published', channels: ['IN_APP', 'EMAIL'], recipients: 'Administrators + AP Supervisor', template: 'Configuration {version} published, effective {effectiveFrom}.', active: true },
 ];

@@ -74,9 +74,15 @@ export function createException(
   markDirty();
   systemAudit({
     eventType: 'EXCEPTION_CREATED', category: 'EXCEPTION', action: 'CREATE',
-    entityType: 'Exception', entityId: exc.code, invoiceId: invoice.id,
+    entityType: 'EXCEPTION', entityId: exc.code, invoiceId: invoice.id,
     entityRef: invoice.invoiceNumber, reason: title, correlationId: invoice.correlationId,
-    module: 'exceptions',
+    module: 'exceptions', result: 'FAIL',
+    details: [
+      { label: 'Invoice', value: invoice.invoiceNumber },
+      { label: 'Exception type', value: exc.type },
+      { label: 'What happened', value: detail },
+      ...(exc.ruleCode ? [{ label: 'Rule', value: exc.ruleCode }] : []),
+    ],
   });
   addTimeline(invoice.id, 'EXCEPTION_CREATED', `Exception ${exc.code} created`, {
     detail: title, status: 'WARNING', reference: exc.code, correlationId: invoice.correlationId,
@@ -233,11 +239,27 @@ export function runExtraction(invoice: Invoice, opts: { degradeFieldCodes?: stri
   }
 
   invoice.extractionConfidence = confidenceCount ? Math.round((confidenceSum / confidenceCount) * 1000) / 1000 : undefined;
+  // The expanded record names which document, which stage, and which extraction
+  // profile and prompt version produced the result (design reference, 24 Aug).
+  const invoiceRuns = db.extractionRuns.filter((r) => r.invoiceId === invoice.id);
+  // The vendor invoice is the document the record is about; the rest of the
+  // bundle is summarised as a count rather than listed row by row.
+  const primaryRun =
+    invoiceRuns.find((r) => r.documentTypeId === 'dt-invoice') ?? invoiceRuns[invoiceRuns.length - 1];
   systemAudit({
     eventType: 'EXTRACTION_COMPLETED', category: 'EXTRACTION', action: 'EXTRACT',
-    entityType: 'Invoice', entityId: invoice.id, entityRef: invoice.invoiceNumber,
+    entityType: 'INVOICE', entityId: invoice.id, entityRef: invoice.invoiceNumber,
     invoiceId: invoice.id, correlationId: invoice.correlationId, module: 'extraction',
-    newValue: { averageConfidence: invoice.extractionConfidence, lowConfidenceFields: lowConfidenceTotal },
+    reason: 'Automatic extraction completed',
+    details: [
+      { label: 'Document', value: db.invoiceDocuments.find((d) => d.id === primaryRun?.documentId)?.fileName ?? '—' },
+      { label: 'Documents read', value: String(invoiceRuns.length) },
+      { label: 'Stage', value: 'EXTRACTION' },
+      { label: 'Extraction profile', value: primaryRun?.profileVersion ?? '—' },
+      { label: 'Prompt version', value: primaryRun?.promptVersion ?? '—' },
+      { label: 'Average confidence', value: `${((invoice.extractionConfidence ?? 0) * 100).toFixed(1)}%` },
+      { label: 'Fields needing review', value: String(lowConfidenceTotal) },
+    ],
   });
   addTimeline(invoice.id, 'EXTRACTION_COMPLETED', 'AI extraction completed', {
     detail: `Average confidence ${(100 * (invoice.extractionConfidence ?? 0)).toFixed(1)}%${lowConfidenceTotal ? ` · ${lowConfidenceTotal} field(s) require review` : ''}`,
@@ -359,10 +381,17 @@ export function runValidation(
     eventType: 'VALIDATION_COMPLETED', category: 'VALIDATION',
     action: trigger === 'REVALIDATION' ? 'REVALIDATE' : 'VALIDATE',
     module: 'rule-engine',
-    entityType: 'ValidationRun', entityId: run.id,
+    entityType: 'VALIDATION', entityId: run.id,
     entityRef: invoice.invoiceNumber, invoiceId: invoice.id,
     result: run.outcome === 'PASS' ? 'PASS' : 'FAIL',
-    newValue: run.summary,
+    reason: `${run.summary.passed} of ${run.summary.total} checks passed`,
+    details: [
+      { label: 'Invoice', value: invoice.invoiceNumber },
+      { label: 'Checks run', value: String(run.summary.total) },
+      { label: 'Passed', value: String(run.summary.passed) },
+      { label: 'Failed', value: String(run.summary.failed + run.summary.hardFailed) },
+      { label: 'Warnings', value: String(run.summary.warnings) },
+    ],
     correlationId: invoice.correlationId,
     source: 'BACKEND',
   });
@@ -439,12 +468,16 @@ export function startWorkflow(invoice: Invoice): void {
     let assignedTo: string | undefined;
     let assignedToName: string | undefined;
     if (s.approverType === 'DOA') {
+      // BPD §11.2: the approval band is chosen by amount alone. The level
+      // belongs to a role, not a person — whoever holds it can approve.
       const doa = db.doaMatrix
-        .filter((d) => d.active && d.department === invoice.department && invoice.amount >= d.minAmount && (d.maxAmount == null || invoice.amount <= d.maxAmount))
+        .filter((d) => d.active && invoice.amount >= d.minAmount && (d.maxAmount == null || invoice.amount <= d.maxAmount))
         .sort((a, b) => a.level - b.level)[0];
       if (doa) {
-        assignedTo = doa.approverUserId;
-        assignedToName = doa.approverName;
+        const role = db.roles.find((r) => r.code === doa.role) ?? db.roles.find((r) => r.code === 'AP_REVIEWER');
+        const holder = role ? db.users.find((x) => x.enabled && x.roleIds.includes(role.id)) : undefined;
+        assignedTo = holder?.id;
+        assignedToName = holder?.name;
       }
     } else if (s.approverType === 'USER' && s.approverRef) {
       const u = db.users.find((x) => x.id === s.approverRef);
@@ -500,7 +533,7 @@ export function activateNextStep(invoice: Invoice, instanceId: string): Workflow
   instance.currentStepNo = next.stepNo;
   markDirty();
   if (next.assignedTo) {
-    notifyUser(next.assignedTo, 'APPROVAL', `Approval requested: ${invoice.invoiceNumber}`, `${invoice.vendorName} · ${invoice.currency} ${invoice.amount.toLocaleString('en-IN')} · step "${next.name}"`, { invoiceId: invoice.id });
+    notifyUser(next.assignedTo, 'APPROVAL', `Approval requested: ${invoice.invoiceNumber}`, `${invoice.vendorName} · ${invoice.currency} ${invoice.amount.toLocaleString('en-US')} · step "${next.name}"`, { invoiceId: invoice.id });
   }
   addTimeline(invoice.id, 'APPROVAL_REQUESTED', `Approval requested: ${next.name}`, {
     detail: next.assignedToName ? `Assigned to ${next.assignedToName}` : `Role ${next.role}`,
@@ -521,7 +554,7 @@ export function onWorkflowApproved(invoice: Invoice): void {
   });
   systemAudit({
     eventType: 'INVOICE_VALIDATED', category: 'INVOICE', action: 'STATUS_CHANGE',
-    entityType: 'Invoice', entityId: invoice.id, entityRef: invoice.invoiceNumber,
+    entityType: 'INVOICE', entityId: invoice.id, entityRef: invoice.invoiceNumber,
     invoiceId: invoice.id, oldValue: { lifecycle: 'DRAFT' }, newValue: { lifecycle: 'VALIDATED' },
     correlationId: invoice.correlationId, module: 'workflow',
   });
@@ -550,7 +583,7 @@ export function actOnStep(
     actorName: user.name,
     category: 'APPROVAL' as const,
     module: 'workflow',
-    entityType: 'WorkflowStep',
+    entityType: 'WORKFLOW',
     entityId: step.id,
     entityRef: invoice.invoiceNumber,
     invoiceId: invoice.id,
@@ -573,8 +606,11 @@ export function actOnStep(
       instance.completedAt = nowIso();
     }
     invoice.stage = 'EXCEPTION';
-    invoice.processingFlag = 'APPROVAL_PENDING';
-    audit({ ...auditBase, eventType: 'APPROVAL_REJECTED', action: 'REJECT', result: 'FAILURE', reason: comment });
+    // Rejected is a business state in its own right (UI/UX review §14): the
+    // invoice stays in the system until corrected documents are resubmitted,
+    // and must not be shown as a generic validation failure.
+    invoice.processingFlag = 'REJECTED';
+    audit({ ...auditBase, eventType: 'APPROVAL_REJECTED', action: 'REJECT', result: 'REJECTED', reason: comment });
     addTimeline(invoice.id, 'APPROVAL_REJECTED', `${step.name} rejected`, {
       actorType: 'USER', actorName: user.name, detail: comment, status: 'ERROR', correlationId: invoice.correlationId,
     });
@@ -641,7 +677,7 @@ export function createSapHandoff(invoice: Invoice): void {
   });
   systemAudit({
     eventType: 'DOWNSTREAM_HANDOFF_REQUESTED', category: 'SAP', action: 'HANDOFF',
-    entityType: 'SapHandoff', entityId: handoff.id, entityRef: invoice.invoiceNumber,
+    entityType: 'SAP', entityId: handoff.id, entityRef: invoice.invoiceNumber,
     invoiceId: invoice.id, correlationId: invoice.correlationId, module: 'sap-integration',
   });
   enqueueJob('SAP_HANDOFF', { refId: handoff.id, invoiceId: invoice.id, correlationId: invoice.correlationId, detail: `Handoff ${handoff.id} for ${invoice.invoiceNumber}`, delayMs: 1500 });
@@ -696,7 +732,7 @@ registerJobHandler('SAP_HANDOFF', (job) => {
   });
   systemAudit({
     eventType: 'EXTERNAL_STATUS_UPDATED', category: 'SAP', action: 'STATUS_SYNC',
-    entityType: 'Invoice', entityId: invoice.id, entityRef: invoice.invoiceNumber,
+    entityType: 'INVOICE', entityId: invoice.id, entityRef: invoice.invoiceNumber,
     invoiceId: invoice.id, newValue: { lifecycle: 'IN_PROGRESS', sapDocumentNo: ack.sapDocumentNo },
     correlationId: invoice.correlationId, module: 'sap-integration',
   });
@@ -724,7 +760,7 @@ registerJobHandler('SAP_STATUS_SYNC', (job) => {
     });
     systemAudit({
       eventType: park ? 'PARKED' : 'POSTED', category: 'SAP', action: 'STATUS_SYNC',
-      entityType: 'Invoice', entityId: invoice.id, entityRef: invoice.invoiceNumber,
+      entityType: 'INVOICE', entityId: invoice.id, entityRef: invoice.invoiceNumber,
       invoiceId: invoice.id, newValue: { lifecycle: invoice.lifecycle }, correlationId: invoice.correlationId,
       module: 'sap-integration',
     });
@@ -748,7 +784,7 @@ registerJobHandler('SAP_STATUS_SYNC', (job) => {
     });
     systemAudit({
       eventType: 'PAYMENT_SYNCED', category: 'SAP', action: 'STATUS_SYNC',
-      entityType: 'Invoice', entityId: invoice.id, entityRef: invoice.invoiceNumber,
+      entityType: 'INVOICE', entityId: invoice.id, entityRef: invoice.invoiceNumber,
       invoiceId: invoice.id, newValue: { lifecycle: 'PAID', paymentRef: invoice.paymentRef },
       correlationId: invoice.correlationId, module: 'sap-integration',
     });
@@ -765,7 +801,6 @@ export interface IngestSpec {
   taxRatePct?: number;
   currency?: string;
   poNumber?: string;
-  department?: string;
   description?: string;
   invoiceDate?: string;
   fileNames: { fileName: string; documentTypeId: string; sizeKb?: number; pages?: number }[];
@@ -795,10 +830,9 @@ export function ingestInvoice(
     amount: spec.amount,
     subtotal,
     taxAmount: Math.round((spec.amount - subtotal) * 100) / 100,
-    currency: spec.currency ?? 'INR',
+    currency: spec.currency ?? 'IDR',
     poNumber: spec.poNumber,
-    department: spec.department ?? vendor?.classification ?? 'Operations',
-    companyCode: '1000',
+    companyCode: 'PAU',
     source,
     stage: 'RECEIVED',
     lifecycle: 'DRAFT',
@@ -879,7 +913,7 @@ export function ingestInvoice(
   audit({
     actorType: actor.id === 'system' ? 'SYSTEM' : 'USER', actorId: actor.id, actorName: actor.name,
     eventType: 'INVOICE_RECEIVED', category: 'INVOICE', action: 'CREATE', module: 'ingestion',
-    entityType: 'Invoice', entityId: invoice.id, entityRef: invoice.invoiceNumber, invoiceId: invoice.id,
+    entityType: 'INVOICE', entityId: invoice.id, entityRef: invoice.invoiceNumber, invoiceId: invoice.id,
     result: 'SUCCESS', newValue: { source, amount: invoice.amount, vendor: invoice.vendorCode },
     correlationId, source: source === 'MANUAL_UPLOAD' ? 'PORTAL' : source,
   });
@@ -909,7 +943,7 @@ registerJobHandler('CLASSIFICATION', (job) => {
   });
   systemAudit({
     eventType: 'DOCUMENT_CLASSIFIED', category: 'DOCUMENT', action: 'CLASSIFY',
-    entityType: 'Invoice', entityId: invoice.id, entityRef: invoice.invoiceNumber,
+    entityType: 'INVOICE', entityId: invoice.id, entityRef: invoice.invoiceNumber,
     invoiceId: invoice.id, newValue: { category: cat?.code }, correlationId: invoice.correlationId,
     module: 'extraction',
   });

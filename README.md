@@ -62,6 +62,13 @@ in the UI **and** enforced by backend authorization on every protected route.
 8. **Configuration governance** — Administration → Invoice Configuration:
    create a draft version, edit documents/fields/rules, publish with an
    effective date. Published versions are immutable.
+9. **SLA Management** (SLA Administration UI Specification) — Administration →
+   SLA Management: one policy per invoice/activity type and stage from the BPD
+   SLA matrix, approval reminders / escalation (BPD §11.4) and the
+   missing-document vendor chase. Open a policy → Create New Version → change
+   the timer / reminders → Test → Publish; watch the Runtime Monitor and the
+   workbench due dates move. Business Calendar, Simulation and Pause /
+   Stop-Clock are marked PROPOSED until ESSA confirms them.
 
 ## Architecture
 

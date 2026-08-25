@@ -173,6 +173,11 @@ export interface Scenario {
   degradeFields?: string[];
   omitDocs?: string[]; // documentTypeIds to omit
   priority?: Invoice['priority'];
+  /**
+   * The scenario is meant to breach its SLA. The real due time comes from the
+   * SLA policies (business days on the ESSA calendar), so `daysAgo` must be
+   * old enough for the clock to have run out — recomputeAllSla() decides.
+   */
   slaBreach?: boolean;
   assignTo?: string;
 }
@@ -513,7 +518,7 @@ export const SCENARIOS: Scenario[] = [
 
   // ---- approvals in flight ----
   { key: 'appr1-mat', categoryId: 'cat-material', vendorCode: 'V100012', amount: 1_003_000, daysAgo: 0, description: 'Pipe fittings & fasteners - August lot', target: 'APPROVAL_STEP_1', assignTo: 'u-arjun' },
-  { key: 'appr2-srv', categoryId: 'cat-service', vendorCode: 'V200023', amount: 531_000, daysAgo: 4, description: 'Analyzer AMC - quarterly billing', target: 'APPROVAL_STEP_2', slaBreach: true },
+  { key: 'appr2-srv', categoryId: 'cat-service', vendorCode: 'V200023', amount: 531_000, daysAgo: 7, description: 'Analyzer AMC - quarterly billing', target: 'APPROVAL_STEP_2', slaBreach: true },
   { key: 'tax-mnp', categoryId: 'cat-manpower', vendorCode: 'V300019', amount: 1_416_000, daysAgo: 1, description: 'Contract manpower - plant operations (July)', target: 'TAX_REVIEW', priority: 'HIGH' },
   { key: 'appr1-npo', categoryId: 'cat-nonpo', vendorCode: 'V500021', amount: 259_600, daysAgo: 0, description: 'Freight charges - urgent spares movement', target: 'APPROVAL_STEP_1' },
   // Non-PO invoices exercise the amount bands of the BPD approval hierarchy.
@@ -529,7 +534,7 @@ export const SCENARIOS: Scenario[] = [
   // The two biometric-mismatch scenarios sit in their own vendor+month so the
   // shortfall applies to them alone — attendance and meal eligibility are
   // aggregated per vendor and month by the validation rules. / exceptions ----
-  { key: 'fail-grn', categoryId: 'cat-material', vendorCode: 'V100034', amount: 1_121_000, daysAgo: 5, description: 'SS fasteners & gaskets supply', target: 'VALIDATION_FAILED', failKind: 'GRN_MISMATCH', assignTo: 'u-priya', slaBreach: true },
+  { key: 'fail-grn', categoryId: 'cat-material', vendorCode: 'V100034', amount: 1_121_000, daysAgo: 8, description: 'SS fasteners & gaskets supply', target: 'VALIDATION_FAILED', failKind: 'GRN_MISMATCH', assignTo: 'u-priya', slaBreach: true },
   { key: 'fail-po', categoryId: 'cat-service', vendorCode: 'V200015', amount: 767_000, daysAgo: 3, description: 'Additional maintenance manhours - July', target: 'VALIDATION_FAILED', failKind: 'PO_EXCEEDED', assignTo: 'u-arjun' },
   { key: 'fail-ses', categoryId: 'cat-service', vendorCode: 'V200023', amount: 448_400, daysAgo: 1, description: 'Instrumentation cabling - tranche 3', target: 'VALIDATION_FAILED', failKind: 'SES_MISMATCH' },
   { key: 'fail-meal', categoryId: 'cat-catering', vendorCode: 'V400018', amount: 82_600, daysAgo: 27, description: 'Canteen services - July supplementary', target: 'VALIDATION_FAILED', failKind: 'MEAL_EXCESS', assignTo: 'u-priya', slaBreach: true },

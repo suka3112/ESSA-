@@ -288,36 +288,203 @@ export type IngestSource = 'EMAIL' | 'SHAREPOINT' | 'MANUAL_UPLOAD';
 
 // ---------------------------------------------------------------- SLA model
 /**
- * SLA stages, from the ESSA EAPA SLA Matrix (BPD v0.1.4 page 13 + §11.3/§11.4).
- * Each invoice/activity type has its own turnaround target per stage.
+ * SLA administration model — ESSA EAPA SLA Administration UI Specification
+ * (basis: BPD v0.1.4 SLA matrix page 13, §11.3 and §11.4).
+ *
+ * Configuration layer (sla_policy + sla_rule + business_calendar):
+ *   · SlaPolicy      — header, scope, stage, trigger, timer, reminders,
+ *                      escalation and (proposed) pause rules. Every published
+ *                      version is immutable; a change creates a new version row
+ *                      with the same `code`.
+ *   · BusinessCalendar — working days/hours and holidays, used only by policies
+ *                      measured in business days / business hours.
+ * Runtime layer (sla_instance + sla_event) is derived from the invoices,
+ * approval steps and document requests the platform already tracks — see
+ * core/sla.ts — so a runtime clock can never disagree with the workbench.
  */
-export type SlaStage = 'INVOICE_CREATION' | 'TAX_REVIEW' | 'AP_APPROVAL' | 'PAYMENT';
 
-export interface SlaRule {
-  id: string;
-  /** Invoice or activity type this target applies to, as named in the SLA matrix. */
-  activityType: string;
-  /** Linked invoice category, when the activity type maps to one. */
-  categoryId?: string;
-  stage: SlaStage;
-  /** Target in working days. Null means the stage does not apply. */
-  days: number | null;
-  /** DEFINED | PROVISIONAL | NOT_APPLICABLE — from the SLA matrix Status column. */
-  confidence: 'DEFINED' | 'PROVISIONAL' | 'NOT_APPLICABLE';
-  note?: string;
-  active: boolean;
+/** Processing stages an SLA policy can be attached to. */
+export type SlaStage = 'INVOICE_CREATION' | 'TAX_REVIEW' | 'AP_APPROVAL' | 'PAYMENT' | 'DOCUMENT_REQUEST';
+
+/** Where a policy applies (spec Screen 2 — Scope Type). */
+export type SlaScopeType = 'INVOICE_CATEGORY' | 'WORKFLOW' | 'DOCUMENT_REQUEST' | 'GLOBAL';
+
+/** Lifecycle of a policy version (spec Screen 9). */
+export type SlaPolicyStatus = 'DRAFT' | 'TEST' | 'ACTIVE' | 'RETIRED';
+
+/** Unit of the target duration. The BPD does not state the unit — see `unitConfirmed`. */
+export type SlaDurationUnit = 'HOURS' | 'CALENDAR_DAYS' | 'BUSINESS_HOURS' | 'BUSINESS_DAYS';
+
+/** Event that creates a runtime SLA instance (spec Screen 2 — Trigger Event). */
+export type SlaTriggerEvent =
+  | 'INVOICE_CREATED'
+  | 'VALIDATION_COMPLETED'
+  | 'TAX_REVIEW_ASSIGNED'
+  | 'WORKFLOW_STEP_ASSIGNED'
+  | 'INVOICE_APPROVED'
+  | 'DOCUMENT_REQUEST_SENT';
+
+export type SlaChannel = 'EMAIL' | 'TEAMS' | 'PORTAL';
+
+export interface SlaDuration {
+  value: number;
+  unit: SlaDurationUnit;
 }
 
-/** Reminder and escalation timers (SLA Matrix — Workflow Timers). */
-export interface ReminderRule {
+export interface SlaTimer {
+  /** Target duration. Null means the stage does not apply to this scope. */
+  duration: number | null;
+  unit: SlaDurationUnit;
+  /** False until ESSA confirms calendar vs business-day interpretation (BPD gap). */
+  unitConfirmed: boolean;
+  /** Required when the unit is business days / business hours. */
+  calendarId?: string;
+  timezone: string;
+  /** Optional pre-breach warning threshold (spec Screen 3). */
+  warningBefore: SlaDuration | null;
+  countdownOnWorkbench: boolean;
+  dashboardIndicator: boolean;
+}
+
+/** One progressive reminder (spec Screen 4). */
+export interface SlaReminderRule {
   id: string;
-  name: string;
-  trigger: string;
-  /** Hours after the trigger. */
-  afterHours: number;
+  seq: number;
+  /** Sent this long after the SLA starts (or after the previous reminder when `repeat` is set). */
+  after: SlaDuration;
+  /** Repeat at the same interval while the SLA is still open (missing-document chase). */
+  repeat: boolean;
   recipient: string;
-  action: string;
-  active: boolean;
+  channels: SlaChannel[];
+  template: string;
+  enabled: boolean;
+}
+
+export type SlaBreachCondition = 'AFTER_FINAL_REMINDER' | 'AFTER_FIRST_UNANSWERED_REMINDER' | 'ON_DUE_TIME';
+
+/** Escalation behaviour (spec Screen 5). */
+export interface SlaEscalation {
+  enabled: boolean;
+  breachCondition: SlaBreachCondition;
+  primaryTarget: string;
+  fallbackTarget: string;
+  channels: SlaChannel[];
+  createAuditEvent: boolean;
+  createBreachFlag: boolean;
+}
+
+/** Proposed stop-clock rule (spec Screen 6) — inert until ESSA confirms. */
+export interface SlaPauseRule {
+  code: string;
+  label: string;
+  pause: boolean;
+  resumeEvent: string;
+  reasonRequired: boolean;
+}
+
+export interface SlaPolicy {
+  /** Row id of this version. */
+  id: string;
+  /** Stable SLA code shared by every version; immutable after first publish. */
+  code: string;
+  name: string;
+  description?: string;
+  scopeType: SlaScopeType;
+  /** Invoice / activity type from the SLA matrix (MATERIAL, SERVICE, NON_PO, PIB_PAYMENT …). */
+  activity?: string;
+  stage: SlaStage;
+  triggerEvent: SlaTriggerEvent;
+  owner?: string;
+  /** Tax Team SLA etc.: the BPD value is still to be confirmed. */
+  provisional: boolean;
+  provisionalNote?: string;
+
+  version: number;
+  status: SlaPolicyStatus;
+  effectiveFrom: string;
+  changedBy: string;
+  changedAt: string;
+  changeSummary?: string;
+  publishedBy?: string;
+  publishedAt?: string;
+  retiredAt?: string;
+  lastTestedAt?: string;
+
+  timer: SlaTimer;
+  reminders: SlaReminderRule[];
+  escalation: SlaEscalation;
+  pauseRules: SlaPauseRule[];
+  manualPauseAllowed: boolean;
+  maxPause: SlaDuration | null;
+}
+
+export type CalendarExceptionType = 'PUBLIC_HOLIDAY' | 'COMPANY_HOLIDAY' | 'WORKING_DAY_EXCEPTION';
+
+export interface CalendarException {
+  id: string;
+  /** yyyy-mm-dd in the calendar's timezone. */
+  date: string;
+  name: string;
+  type: CalendarExceptionType;
+  /** Whether the day counts as working time. */
+  working: boolean;
+}
+
+/** Working-time calendar (spec Screen 7). */
+export interface BusinessCalendar {
+  id: string;
+  code: string;
+  name: string;
+  timezone: string;
+  /** ISO weekday numbers, 1 = Monday … 7 = Sunday. */
+  workingDays: number[];
+  workStart: string;
+  workEnd: string;
+  status: 'DRAFT' | 'ACTIVE' | 'RETIRED';
+  version: number;
+  effectiveFrom: string;
+  changedBy: string;
+  changedAt: string;
+  exceptions: CalendarException[];
+}
+
+/** Recommended runtime statuses (spec §15.1). */
+export type SlaInstanceStatus = 'PENDING' | 'RUNNING' | 'WARNING' | 'PAUSED' | 'COMPLETED' | 'BREACHED' | 'CANCELLED';
+
+export type SlaEventType = 'STARTED' | 'WARNING' | 'REMINDER' | 'PAUSED' | 'RESUMED' | 'ESCALATED' | 'COMPLETED' | 'BREACHED' | 'CANCELLED';
+
+export interface SlaEvent {
+  type: SlaEventType;
+  at: string;
+  detail: string;
+}
+
+/** Runtime SLA instance — one per invoice stage / approval step / document request. */
+export interface SlaInstance {
+  id: string;
+  objectType: 'INVOICE' | 'WORKFLOW_STEP' | 'DOCUMENT_REQUEST';
+  objectId: string;
+  /** Business reference shown to users (invoice number, request number). */
+  reference: string;
+  invoiceId?: string;
+  invoiceNumber?: string;
+  vendorName?: string;
+  categoryId?: string;
+  categoryName?: string;
+  policyId?: string;
+  policyCode: string;
+  policyName: string;
+  policyVersion?: number;
+  stage: SlaStage;
+  owner: string;
+  startedAt: string;
+  warningAt?: string | null;
+  dueAt?: string | null;
+  status: SlaInstanceStatus;
+  /** Milliseconds remaining (positive) or overdue (negative); null when no clock. */
+  remainingMs: number | null;
+  note?: string;
+  events: SlaEvent[];
 }
 
 /**

@@ -18,7 +18,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, ArrowLeft, ArrowRight, CalendarDays, PanelRightClose, PanelRightOpen, Plus, Send } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
-import { currentStatus, fmtDate, fmtDateTime, fmtMoney, isPreExtraction, nextStatus, titleCase } from '@/lib/format';
+import { currentStatus, fmtDate, fmtDateTime, fmtMoney, isPreExtraction, nextStatus } from '@/lib/format';
 import {
   Badge, Button, Card, ErrorState, Field, InvoiceStatusBadge, LoadingState, Modal, NotAvailable, Select, Tabs, useToast, Input,
 } from '@/components/ui';
@@ -26,7 +26,6 @@ import type { DocumentRow, InvoiceDetail } from './invoice/types';
 import { DocumentViewer } from './invoice/DocumentViewer';
 import { ExtractValidateTab } from './invoice/ExtractValidate';
 import { ApprovalsTab, TimelineTab } from './invoice/tabs2';
-import { ExceptionActions } from './exceptions/ExceptionActions';
 
 /** Legacy tab keys (old bookmarks / links) map onto the current tabs. */
 const LEGACY_TABS: Record<string, string> = {
@@ -172,35 +171,9 @@ export default function InvoiceDetailPage() {
         </div>
       )}
 
-      {/* Invoice-level exceptions that cannot be fixed by correcting a field —
-          missing documents, rejections and technical failures (review §7). */}
-      {openExceptions.length > 0 && (
-        <Card
-          title={<span className="text-semantic-error">Open exceptions ({openExceptions.length})</span>}
-          pad={false}
-        >
-          <ul className="divide-y divide-line-soft">
-            {openExceptions.map((e) => (
-              <li key={e.id} className="px-4 py-3">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-xs font-semibold text-essa-700">{e.code}</span>
-                  <Badge tone="error">{titleCase(e.type)}</Badge>
-                  <span className="text-2xs text-ink-muted">Raised {fmtDateTime(e.createdAt)}</span>
-                </div>
-                <p className="mt-1 text-xs font-medium text-ink">{e.title}</p>
-                <p className="text-xs text-ink-secondary">{e.detail}</p>
-                <div className="mt-2">
-                  <ExceptionActions
-                    exception={e}
-                    onChanged={invalidate}
-                    onAddDocument={hasPerm('INVOICE_EDIT') ? () => setDocModal({ mode: 'add' }) : undefined}
-                  />
-                </div>
-              </li>
-            ))}
-          </ul>
-        </Card>
-      )}
+      {/* Exceptions no longer occupy a full-width list here (review, 25 Aug) —
+          they are handled one at a time from the "Exceptions / Override" button
+          inside the Validation section of Extract & Validate. */}
 
       {/* ---------------------------------------------------------- body */}
       <div className={showDoc ? 'grid grid-cols-1 gap-4 xl:grid-cols-5' : 'grid grid-cols-1'}>

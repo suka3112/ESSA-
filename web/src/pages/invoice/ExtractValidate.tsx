@@ -19,9 +19,10 @@ import {
 import clsx from 'clsx';
 import { api, ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
-import { currentStatus, fmtDateTime, fmtMoney, fmtNumber, nextStatus, statusDetail } from '@/lib/format';
+import { currentStatus, fmtDateTime, fmtMoney, fmtNumber, nextStatus, statusDetail, titleCase } from '@/lib/format';
 import { Badge, Button, ConfirmDialog, Field, Input, InvoiceStatusBadge, Modal, ScrollTabs, Textarea, useToast } from '@/components/ui';
-import type { FieldRow, InvoiceDetail, ValidationResultRow } from './types';
+import type { ExceptionRow, FieldRow, InvoiceDetail, ValidationResultRow } from './types';
+import { ExceptionActions } from '../exceptions/ExceptionActions';
 
 const letter = (i: number) => String.fromCharCode(65 + i);
 
@@ -144,6 +145,12 @@ export function ExtractValidateTab({
   const selected: ValidationResultRow | undefined = results[checkIdx ?? (firstFail >= 0 ? firstFail : 0)];
   const [reportOpen, setReportOpen] = useState(false);
   const [overriding, setOverriding] = useState<ValidationResultRow | null>(null);
+  // Exceptions live in a popup opened from the Validation header (design
+  // review, 25 Aug) — the old always-expanded "Open exceptions" list took too
+  // much vertical space. One exception is shown at a time; tabs move between them.
+  const [excOpen, setExcOpen] = useState(false);
+  const [docRequest, setDocRequest] = useState<ExceptionRow | null>(null);
+  const openExceptions = detail.exceptions.filter((e) => !['RESOLVED', 'CLOSED'].includes(e.status));
 
   const revalidate = useMutation({
     mutationFn: () => api.post<{ run: { outcome: string } }>(`/invoices/${inv.id}/revalidate`),
@@ -409,11 +416,18 @@ export function ExtractValidateTab({
               </span>
             </span>
           </span>
-          {canRevalidate && (
-            <Button size="sm" variant="secondary" loading={revalidate.isPending} onClick={() => revalidate.mutate()}>
-              <RefreshCcw size={13} /> Re-validate
-            </Button>
-          )}
+          <span className="flex flex-wrap items-center gap-2">
+            {openExceptions.length > 0 && (
+              <Button size="sm" variant="warning" onClick={() => setExcOpen(true)}>
+                <ShieldOff size={13} /> Exceptions / Override ({openExceptions.length})
+              </Button>
+            )}
+            {canRevalidate && (
+              <Button size="sm" variant="secondary" loading={revalidate.isPending} onClick={() => revalidate.mutate()}>
+                <RefreshCcw size={13} /> Re-validate
+              </Button>
+            )}
+          </span>
         </div>
 
         {!run ? (
@@ -616,7 +630,130 @@ export function ExtractValidateTab({
         reportText={reportText}
         onSent={() => toast.push({ tone: 'success', title: 'Report sent to vendor', detail: 'Email queued via the notification service and recorded in the audit trail.' })}
       />
+
+      {/* Exceptions & overrides popup — one exception at a time, tabs to move
+          between them; an overridden exception leaves the list automatically. */}
+      <ExceptionsModal
+        open={excOpen}
+        onClose={() => setExcOpen(false)}
+        exceptions={openExceptions}
+        onChanged={invalidate}
+        onAddDocument={onAddDocument ? () => onAddDocument() : undefined}
+        onEmailVendor={(e) => setDocRequest(e)}
+      />
+
+      {/* Missing-document request to vendor — same emailer as Report to vendor,
+          body pre-filled with the missing document from the exception. */}
+      <ReportToVendorModal
+        open={Boolean(docRequest)}
+        onClose={() => setDocRequest(null)}
+        vendorName={inv.vendorName}
+        vendorCode={inv.vendorCode}
+        invoiceNumber={inv.invoiceNumber}
+        category={inv.categoryName}
+        hasFailures={false}
+        heading="Request missing document"
+        subjectLabel="Missing document request"
+        reportText={
+          docRequest
+            ? `Dear ${inv.vendorName},\n\nThe following mandatory item is missing for invoice ${inv.invoiceNumber}:\n\n  · ${docRequest.title}\n\n${docRequest.detail}\n\nPlease reply to this email with the missing document so processing can continue. This request is repeated every 7 days while the document is outstanding.\n\nRegards,\nESSA Accounts Payable`
+            : ''
+        }
+        onSent={() => toast.push({ tone: 'success', title: 'Document request sent to vendor', detail: 'Email queued via the notification service and recorded in the audit trail.' })}
+      />
     </div>
+  );
+}
+
+/**
+ * Exceptions & overrides popup (design review, 25 Aug): replaces the
+ * always-expanded "Open exceptions" list on the invoice page. One exception is
+ * shown at a time; the tab row moves between them. Overriding uses the same
+ * audited actions as before; a missing-document exception additionally offers
+ * an email request to the vendor.
+ */
+function ExceptionsModal({
+  open, onClose, exceptions, onChanged, onAddDocument, onEmailVendor,
+}: {
+  open: boolean;
+  onClose: () => void;
+  exceptions: ExceptionRow[];
+  onChanged: () => void;
+  onAddDocument?: () => void;
+  onEmailVendor: (e: ExceptionRow) => void;
+}) {
+  const [idx, setIdx] = useState(0);
+  // Clamp so the selection stays valid as overridden exceptions leave the list.
+  const activeIdx = Math.min(idx, Math.max(0, exceptions.length - 1));
+  const active = exceptions[activeIdx];
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      wide
+      title={
+        <span>
+          Exceptions &amp; overrides
+          <span className="mt-0.5 block text-xs font-normal text-ink-muted">
+            {exceptions.length > 0
+              ? `${exceptions.length} open — handle one at a time; a handled exception leaves the list.`
+              : 'All exceptions on this invoice are handled.'}
+          </span>
+        </span>
+      }
+      footer={<Button variant="ghost" onClick={onClose}>Close</Button>}
+    >
+      {exceptions.length === 0 ? (
+        <p className="py-8 text-center text-xs text-ink-muted">
+          Nothing left to handle here — validation re-runs automatically and the invoice moves on.
+        </p>
+      ) : (
+        <div className="space-y-3">
+          {/* one tab per open exception */}
+          <div className="flex flex-wrap gap-1 border-b border-line pb-2">
+            {exceptions.map((e, i) => (
+              <button
+                key={e.id}
+                onClick={() => setIdx(i)}
+                className={clsx(
+                  'rounded-md px-2.5 py-1 text-2xs font-semibold transition-colors',
+                  i === activeIdx
+                    ? 'bg-semantic-errorBg text-semantic-error'
+                    : 'text-ink-secondary hover:bg-canvas hover:text-ink'
+                )}
+              >
+                {e.code}
+              </button>
+            ))}
+          </div>
+
+          {active && (
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs font-semibold text-essa-700">{active.code}</span>
+                <Badge tone="error">{titleCase(active.type)}</Badge>
+                <span className="text-2xs text-ink-muted">Raised {fmtDateTime(active.createdAt)}</span>
+              </div>
+              <p className="text-xs font-medium text-ink">{active.title}</p>
+              <p className="text-xs text-ink-secondary">{active.detail}</p>
+
+              {active.type === 'MISSING_SUPPORTING_DOCUMENT' && (
+                <div className="flex items-center gap-2 rounded-lg border border-essa-200 bg-essa-50/60 px-3 py-2">
+                  <span className="flex-1 text-2xs text-ink-secondary">
+                    The document must come from the vendor — send a request instead of overriding.
+                  </span>
+                  <Button size="sm" variant="secondary" onClick={() => onEmailVendor(active)}>
+                    <Mail size={13} /> Request from vendor
+                  </Button>
+                </div>
+              )}
+
+              <ExceptionActions exception={active} onChanged={onChanged} onAddDocument={onAddDocument} />
+            </div>
+          )}
+        </div>
+      )}
+    </Modal>
   );
 }
 
@@ -626,7 +763,7 @@ export function ExtractValidateTab({
  * non-editable so vendor replies can be uniquely matched back to the invoice.
  */
 function ReportToVendorModal({
-  open, onClose, vendorName, vendorCode, invoiceNumber, category, hasFailures, reportText, onSent,
+  open, onClose, vendorName, vendorCode, invoiceNumber, category, hasFailures, reportText, onSent, heading, subjectLabel,
 }: {
   open: boolean;
   onClose: () => void;
@@ -637,6 +774,10 @@ function ReportToVendorModal({
   hasFailures: boolean;
   reportText: string;
   onSent: () => void;
+  /** Modal heading — defaults to "Report to vendor". */
+  heading?: string;
+  /** Subject purpose label — defaults to Validation failure / Validation report. */
+  subjectLabel?: string;
 }) {
   const [to, setTo] = useState('');
   const [cc, setCc] = useState('');
@@ -652,7 +793,7 @@ function ReportToVendorModal({
     setSeeded(false);
   }
   const today = new Date().toLocaleDateString('en-CA');
-  const subject = `[EAPA] ${vendorName} · Invoice ${invoiceNumber}${category ? ` · ${category}` : ''} · ${hasFailures ? 'Validation failure' : 'Validation report'} ${today}`;
+  const subject = `[EAPA] ${vendorName} · Invoice ${invoiceNumber}${category ? ` · ${category}` : ''} · ${subjectLabel ?? (hasFailures ? 'Validation failure' : 'Validation report')} ${today}`;
   return (
     /* V1-style emailer popup: To, CC, Subject (non-editable), Message, and
        Cancel + Send — opened from "Report to vendor" inside Validation. */
@@ -661,9 +802,9 @@ function ReportToVendorModal({
       onClose={onClose}
       title={
         <span>
-          Report to vendor
+          {heading ?? 'Report to vendor'}
           <span className="mt-0.5 block text-xs font-normal text-ink-muted">
-            {hasFailures ? 'Draft email with validation failures pre-filled. Edit before sending.' : 'Draft email with the validation report pre-filled. Edit before sending.'}
+            {heading ? 'Draft email pre-filled from the exception. Edit before sending.' : hasFailures ? 'Draft email with validation failures pre-filled. Edit before sending.' : 'Draft email with the validation report pre-filled. Edit before sending.'}
           </span>
         </span>
       }

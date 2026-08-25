@@ -12,7 +12,7 @@ services:
     region: singapore
     branch: main
     buildCommand: npm install --include=dev && npm run build
-    startCommand: npm start
+    startCommand: npm run start:hosted
     healthCheckPath: /api/v1/health
     autoDeploy: true
     envVars:

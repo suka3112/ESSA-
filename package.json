@@ -12,7 +12,8 @@
     "build": "npm run build -w server && npm run build -w web",
     "start": "npm run start -w server",
     "typecheck": "npm run typecheck -w server && npm run typecheck -w web",
-    "seed:reset": "npm run seed:reset -w server"
+    "seed:reset": "npm run seed:reset -w server",
+    "start:hosted": "node server/dist/serve.js"
   },
   "devDependencies": {
     "concurrently": "^9.1.0"

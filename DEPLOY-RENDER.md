@@ -15,7 +15,8 @@ Total time: ~15 minutes. Everything below is free.
 
 | File | Change |
 |---|---|
-| `server/src/app.ts` | After the `/api/v1` routes, serves `web/dist` statically with an SPA fallback (so `/invoices/123` and browser refresh work). No-op in local dev. |
+| `server/src/serve.ts` | **Hosted entrypoint.** Boots like `index.ts`, then serves `web/dist` with an SPA fallback (so `/invoices/123` and browser refresh work). Kept in its own file so regenerating `app.ts`/`index.ts` cannot break hosting. |
+| `package.json` | New script `start:hosted` → `node server/dist/serve.js` (this is what Render runs). |
 | `render.yaml` | Render "Blueprint": free Node web service, Singapore region, build + start commands, health check on `/api/v1/health`. |
 | `.nvmrc` | Pins Node 22 so Render builds with the same version. |
 
@@ -96,7 +97,7 @@ Check: https://github.com/suka3112/ESSA- shows `server/`, `web/`,
 | Region | Singapore |
 | Branch | main |
 | Build Command | `npm install --include=dev && npm run build` |
-| Start Command | `npm start` |
+| Start Command | `npm run start:hosted` |
 | Instance type | **Free** |
 | Environment variables | `NODE_VERSION=22.12.0`, `NODE_ENV=production` |
 | Health Check Path (Advanced) | `/api/v1/health` |
@@ -144,7 +145,7 @@ Check: https://github.com/suka3112/ESSA- shows `server/`, `web/`,
 |---|---|
 | Build fails with `tsc: not found` / `vite: not found` | Build command must include `--include=dev` (devDependencies hold the compilers). |
 | Build fails on a TypeScript error | Run `npm run build` locally first; fix the reported file; push again. |
-| Page shows `Cannot GET /` | `web/dist` was not built. Check the build log for the `vite build` step and that the start command is `npm start` from the repo root (not `server/`). |
+| Page shows `Cannot GET /` | Start Command on Render must be `npm run start:hosted` (Settings → Build & Deploy). `npm start` runs the API only. |
 | `502` for the first minute | Normal cold start on the free tier — wait and refresh. |
 | Health check failing | Path must be exactly `/api/v1/health`; the server must listen on `process.env.PORT` (it does). |
 | Blank page, console shows 404 on `/assets/…` | Deploy is mid-restart; wait 30 s. If persistent, redeploy with *Clear build cache*. |

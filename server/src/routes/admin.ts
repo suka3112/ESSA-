@@ -5,6 +5,7 @@ import { Errors } from '../core/errors';
 import { audit } from '../core/audit';
 import { ids, nowIso } from '../core/ids';
 import { notifyRole } from '../modules/pipeline/helpers';
+import { recomputeAllSla } from '../core/sla';
 
 export const adminRouter = Router();
 
@@ -131,7 +132,8 @@ const ENTITY_LABEL: Record<string, string> = {
   promptTemplates: 'EXTRACTION_PROMPT', fieldMappings: 'SAP_FIELD_MAPPING',
   validationRules: 'VALIDATION_RULE', workflows: 'WORKFLOW',
   notificationRules: 'NOTIFICATION_RULE', doaMatrix: 'APPROVAL_HIERARCHY',
-  roles: 'ROLE', exceptionCodes: 'EXCEPTION_CODE',
+  roles: 'ROLE', slaRules: 'SLA_TARGET', reminderRules: 'REMINDER_TIMER',
+  exceptionCodes: 'EXCEPTION_CODE',
 };
 
 adminRouter.post('/configuration/entities/:entity', authorize('CONFIG_EDIT'), asyncHandler((req, res) => {
@@ -153,9 +155,10 @@ adminRouter.post('/configuration/entities/:entity', authorize('CONFIG_EDIT'), as
     workflows: db.workflowDefinitions as unknown as Row[],
     notificationRules: db.notificationRules as unknown as Row[],
     doaMatrix: db.doaMatrix as unknown as Row[],
-    // SLA policies, reminders, escalations and calendars have their own
-    // versioned lifecycle — see routes/sla.ts (Administration → SLA Management).
-    // The exception-code catalogue is maintained there too (Exception Codes).
+    // SLA targets and reminder/escalation timers (BPD §11.3 / §11.4) are
+    // maintained from Administration → SLA & Reminders.
+    slaRules: db.slaRules as unknown as Row[],
+    reminderRules: db.reminderRules as unknown as Row[],
     exceptionCodes: db.exceptionCodes as unknown as Row[],
     // Role Management (design review, Aug 2026): admins can create/edit/
     // enable-disable custom roles and configure their permissions.
@@ -197,6 +200,9 @@ adminRouter.post('/configuration/entities/:entity', authorize('CONFIG_EDIT'), as
       outcome = coll[idx];
     }
   }
+  // Changing an SLA target moves every running clock, so the invoices are
+  // recomputed straight away rather than drifting until the next seed.
+  if (entity === 'slaRules') recomputeAllSla(db);
   markDirty();
   audit({
     actorType: 'USER', actorId: user.id, actorName: user.name,

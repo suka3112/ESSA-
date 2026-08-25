@@ -312,8 +312,8 @@ miscRouter.get('/lookups', asyncHandler((_req, res) => {
     users: db.users.map((u) => ({ id: u.id, name: u.name, title: u.title, enabled: u.enabled })),
     vendors: db.vendors.map((v) => ({ code: v.code, name: v.name })),
     activeConfigVersion: db.configVersions.find((c) => c.status === 'ACTIVE'),
-    // Administration dashboard tile: published SLA policies.
-    slaPolicies: db.slaPolicies.map((p) => ({ id: p.id, code: p.code, status: p.status, duration: p.timer.duration })),
+    slaRules: db.slaRules,
+    reminderRules: db.reminderRules,
     exceptionCodes: db.exceptionCodes,
   });
 }));

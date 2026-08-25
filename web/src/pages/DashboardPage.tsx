@@ -180,7 +180,7 @@ export default function DashboardPage() {
     queryFn: () => api.get<{
       categories: { id: string; name: string; poBased: boolean }[];
       documentTypes: { id: string; name: string }[];
-      slaPolicies: { id: string; code: string; status: string; duration: number | null }[];
+      slaRules: { id: string; days: number | null }[];
     }>('/lookups'),
     enabled: role === 'ADMIN',
   });
@@ -211,7 +211,7 @@ export default function DashboardPage() {
   const backlog = data.approvalBacklog;
 
   const categories = configQ.data?.categories ?? [];
-  const slaCount = (configQ.data?.slaPolicies ?? []).filter((p) => p.status === 'ACTIVE' && p.duration != null).length;
+  const slaCount = (configQ.data?.slaRules ?? []).filter((r) => r.days != null).length;
   const roles = usersQ.data?.roles ?? [];
   const users = usersQ.data?.users ?? [];
 
@@ -495,8 +495,8 @@ export default function DashboardPage() {
               tip={{ meaning: 'Roles configured on the platform and the permissions they carry.' }}
             />
             <StatCard
-              label="SLA Policies" value={slaCount} tone="amber" icon={<Clock size={13} />} to="/admin/sla" caption="published and in force"
-              tip={{ meaning: 'Published SLA policies with a target: turnaround per invoice type and stage, approval reminders / escalation and the missing-document vendor chase.', action: 'Maintain them in SLA Management.' }}
+              label="SLA Targets" value={slaCount} tone="amber" icon={<Clock size={13} />} to="/admin/sla" caption="turnaround targets"
+              tip={{ meaning: 'Turnaround targets per invoice type and stage, plus the approval reminder and escalation timers.', action: 'Maintain them in SLA & Reminders.' }}
             />
           </div>
 

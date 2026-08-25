@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { NavLink, Link, useLocation, useNavigate } from 'react-router-dom';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import {
-  ChevronDown, CircleHelp, ClipboardCheck, FileSpreadsheet, FileText,
-  LayoutDashboard, LogOut, Menu, Settings, ShieldCheck, Landmark,
+  Check, ChevronDown, CircleHelp, ClipboardCheck, FileSpreadsheet, FileText,
+  LayoutDashboard, LogOut, Menu, Settings, ShieldCheck, Landmark, Users,
 } from 'lucide-react';
-import { useAuth } from '@/lib/auth';
+import { api } from '@/lib/api';
+import { DEMO_PERSONAS, useAuth } from '@/lib/auth';
 import { displayRoles } from '@/lib/format';
 
 interface NavItem {
@@ -42,7 +44,7 @@ const NAV: NavItem[] = [
     label: 'Administration', to: '/admin/configuration', icon: <Settings size={16} />, perm: 'CONFIG_VIEW',
     children: [
       { label: 'Invoice Configuration', to: '/admin/configuration', perm: 'CONFIG_VIEW' },
-      { label: 'SLA Management', to: '/admin/sla', perm: 'CONFIG_VIEW' },
+      { label: 'SLA & Reminders', to: '/admin/sla', perm: 'CONFIG_VIEW' },
       { label: 'Workflows & Approval Hierarchy', to: '/admin/workflows', perm: 'CONFIG_VIEW' },
       { label: 'Users & Roles', to: '/admin/users', perm: 'USER_ADMIN' },
     ],
@@ -54,6 +56,8 @@ const NAV: NavItem[] = [
    */
   { label: 'Audit Log', to: '/audit', icon: <ShieldCheck size={16} />, perm: 'AUDIT_VIEW' },
 ];
+
+interface DirectoryUser { id: string; name: string; email: string; title: string; enabled: boolean; roles: string[] }
 
 /** Approved branding: EAPA — ESSA Accounts Payable Automation. */
 function EapaLogo() {
@@ -76,6 +80,33 @@ export function AppShell({ children }: { children: ReactNode }) {
   const location = useLocation();
   const userRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
+  const qc = useQueryClient();
+  const { login } = useAuth();
+  const [switching, setSwitching] = useState<string | null>(null);
+
+  // Only the identities that can actually be used: enabled, and holding a role.
+  const directoryQ = useQuery({
+    queryKey: ['directory'],
+    queryFn: () => api.get<DirectoryUser[]>('/auth/directory'),
+    enabled: DEMO_PERSONAS && Boolean(user),
+    staleTime: 5 * 60_000,
+  });
+  const personas = (directoryQ.data ?? []).filter((u) => u.enabled && u.roles.length);
+
+  const switchPersona = async (id: string) => {
+    setSwitching(id);
+    try {
+      await login(id);
+      // Everything cached belongs to the previous persona, and the screen we are
+      // on may not be theirs to see — start them on the dashboard with a clean
+      // cache so nothing leaks across the switch.
+      qc.clear();
+      setUserMenu(false);
+      navigate('/');
+    } finally {
+      setSwitching(null);
+    }
+  };
 
   useEffect(() => setMobileOpen(false), [location.pathname]);
   useEffect(() => {
@@ -96,7 +127,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <EapaLogo />
       <nav aria-label="Main navigation" className="flex-1 overflow-y-auto px-2 pb-4 scrollbar-thin">
         {visibleNav.map((item) => {
-          const activeParent = item.children?.some((c) => location.pathname === c.to || location.pathname.startsWith(`${c.to}/`)) || location.pathname === item.to;
+          const activeParent = item.children?.some((c) => location.pathname === c.to) || location.pathname === item.to;
           return (
             <div key={item.label} className="mb-0.5">
               <NavLink
@@ -118,9 +149,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                     <NavLink
                       key={c.to}
                       to={c.to}
-                      // SLA Management has its own sub-screens (/admin/sla/…);
-                      // every other admin entry is a single page.
-                      end={c.to !== '/admin/sla'}
+                      end
                       className={({ isActive }) =>
                         clsx(
                           'block rounded px-2 py-1.5 text-xs font-medium',
@@ -192,12 +221,52 @@ export function AppShell({ children }: { children: ReactNode }) {
               <ChevronDown size={13} className="text-ink-muted" />
             </button>
             {userMenu && (
-              <div role="menu" className="absolute right-0 top-10 z-40 w-56 rounded-lg border border-line bg-white py-1 shadow-pop">
+              <div role="menu" className="absolute right-0 top-10 z-40 w-72 rounded-lg border border-line bg-white py-1 shadow-pop">
                 <div className="border-b border-line-soft px-3 py-2">
                   <p className="text-xs font-semibold">{user?.name}</p>
                   <p className="text-2xs text-ink-muted">{user?.email}</p>
                   <p className="mt-0.5 text-2xs text-ink-muted">{user?.title}</p>
                 </div>
+
+                {DEMO_PERSONAS && personas.length > 1 && (
+                  <div className="border-b border-line-soft py-1">
+                    <p className="flex items-center gap-1.5 px-3 pb-1 pt-1.5 text-2xs font-semibold uppercase tracking-wide text-ink-muted">
+                      <Users size={12} /> Switch persona
+                    </p>
+                    <p className="px-3 pb-1.5 text-2xs leading-snug text-ink-faint">
+                      Demo environment only — in production you are whoever your corporate account signs you in as.
+                    </p>
+                    {personas.map((persona) => {
+                      const current = persona.id === user?.id;
+                      return (
+                        <button
+                          key={persona.id}
+                          role="menuitem"
+                          disabled={current || Boolean(switching)}
+                          onClick={() => switchPersona(persona.id)}
+                          className={clsx(
+                            'flex w-full items-start gap-2 px-3 py-1.5 text-left transition-colors',
+                            current ? 'bg-essa-50' : 'hover:bg-line-soft disabled:opacity-60'
+                          )}
+                        >
+                          <span className={clsx('mt-0.5 shrink-0', current ? 'text-essa-600' : 'text-transparent')}>
+                            <Check size={12} />
+                          </span>
+                          <span className="min-w-0">
+                            <span className={clsx('block truncate text-xs', current ? 'font-semibold text-essa-800' : 'text-ink')}>
+                              {persona.name}
+                            </span>
+                            <span className="block truncate text-2xs text-ink-muted">
+                              {displayRoles(persona.roles).join(' · ')}
+                              {switching === persona.id ? ' · switching…' : ''}
+                            </span>
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+
                 <button
                   role="menuitem"
                   onClick={async () => {

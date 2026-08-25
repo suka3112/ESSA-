@@ -38,8 +38,8 @@ export interface Database {
   workflowInstances: T.WorkflowInstance[];
   workflowSteps: T.WorkflowStepInstance[];
   doaMatrix: T.DoAEntry[];
-  slaPolicies: T.SlaPolicy[];
-  businessCalendars: T.BusinessCalendar[];
+  slaRules: T.SlaRule[];
+  reminderRules: T.ReminderRule[];
   exceptionCodes: T.ExceptionCode[];
   vendors: T.VendorSnapshot[];
   vendorControls: T.VendorPortalControl[];

@@ -32,6 +32,18 @@ const AuthContext = createContext<AuthContextShape>({
 /** Remembers which directory identity "Entra" resolved to, so refreshes and sign-in/out cycles stay on the same user. */
 const SSO_HINT_KEY = 'essa.sso.user';
 
+/**
+ * Persona selection for demos and UAT.
+ *
+ * Authentication is Microsoft Entra ID, so in production a person is whoever
+ * their corporate account signs them in as: sign-in redirects straight through
+ * and there is nothing to choose. In the DEV/UAT build the reviewer picks which
+ * persona to look at the platform as — on the sign-in screen, and from the
+ * account menu afterwards. Set VITE_DEMO_PERSONAS=off to get the production
+ * behaviour.
+ */
+export const DEMO_PERSONAS = import.meta.env.VITE_DEMO_PERSONAS !== 'off';
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<SessionUser | null>(null);
   const [loading, setLoading] = useState(true);

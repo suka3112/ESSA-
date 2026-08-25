@@ -2,7 +2,7 @@ import type { Database } from '../../core/store';
 import { getDb, markDirty, persist } from '../../core/store';
 import { DAY, HOUR, ids, isoAgo } from '../../core/ids';
 import { DOA_MATRIX, PERMISSIONS, ROLES, USERS } from './identity';
-import { BUSINESS_CALENDARS, EXCEPTION_CODES, SLA_POLICIES } from './sla';
+import { EXCEPTION_CODES, REMINDER_RULES, SLA_RULES } from './sla';
 import { recomputeAllSla } from '../../core/sla';
 import {
   CATEGORIES, CATEGORY_DOCUMENTS, CONFIG_VERSIONS, DOCUMENT_FIELDS, DOCUMENT_TYPES,
@@ -18,7 +18,7 @@ import { techLog } from '../../core/logger';
  * Bump this whenever the seed dataset changes materially - existing local
  * snapshots reseed automatically on next server start.
  */
-export const SEED_VERSION = 5;
+export const SEED_VERSION = 3;
 
 export function buildBaseDb(): Database {
   return {
@@ -48,8 +48,8 @@ export function buildBaseDb(): Database {
     workflowInstances: [],
     workflowSteps: [],
     doaMatrix: structuredClone(DOA_MATRIX),
-    slaPolicies: structuredClone(SLA_POLICIES),
-    businessCalendars: structuredClone(BUSINESS_CALENDARS),
+    slaRules: structuredClone(SLA_RULES),
+    reminderRules: structuredClone(REMINDER_RULES),
     exceptionCodes: structuredClone(EXCEPTION_CODES),
     vendors: structuredClone(VENDORS),
     vendorControls: structuredClone(VENDOR_CONTROLS),
@@ -326,14 +326,5 @@ function restampInvoiceHistory(db: Database, seedStartedAt: string): void {
       // Never move an entry into the future.
       ev.at = new Date(Math.min(at, Date.now() - 60_000)).toISOString();
     });
-    // Approval steps the seed acted on carry the same "now" stamp. Move them
-    // onto the invoice's timeline too, so the approval SLA clock (which starts
-    // when the previous level acted) reads from the scenario's history and a
-    // scenario meant to breach its approval SLA actually does.
-    const lastAt = ordered[ordered.length - 1]?.at;
-    for (const step of db.workflowSteps) {
-      if (step.invoiceId !== invoiceId || !step.actedAt || step.actedAt < seedStartedAt) continue;
-      step.actedAt = lastAt ?? new Date(Math.min(received + 6 * HOUR_MS, Date.now() - 60_000)).toISOString();
-    }
   }
 }

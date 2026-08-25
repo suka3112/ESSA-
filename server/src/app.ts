@@ -8,7 +8,6 @@ import { approvalRouter } from './routes/approvals';
 import { vendorRouter } from './routes/vendors';
 import { integrationRouter } from './routes/integrations';
 import { adminRouter } from './routes/admin';
-import { slaRouter } from './routes/sla';
 import { miscRouter } from './routes/misc';
 
 export function createApp() {
@@ -30,7 +29,6 @@ export function createApp() {
   api.use(vendorRouter);
   api.use(integrationRouter);
   api.use(adminRouter);
-  api.use(slaRouter);
   api.use(miscRouter);
   app.use('/api/v1', api);
 

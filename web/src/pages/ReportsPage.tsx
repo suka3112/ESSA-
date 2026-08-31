@@ -159,8 +159,8 @@ export default function ReportsPage() {
                 <YAxis yAxisId="l" tick={{ fontSize: 10 }} allowDecimals={false} />
                 <YAxis yAxisId="r" orientation="right" tick={{ fontSize: 10 }} tickFormatter={(v: number) => (v >= 1e9 ? `${(v / 1e9).toFixed(v % 1e9 ? 1 : 0)} bn` : `${Math.round(v / 1e6)} m`)} />
                 <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} labelFormatter={(v) => fmtMonth(String(v))} formatter={(v: number, n: string) => (n === 'Value' ? fmtMoney(v) : v)} />
-                <Bar yAxisId="l" dataKey="count" name="Invoices" fill="#1f7a41" radius={[3, 3, 0, 0]} barSize={22} />
-                <Bar yAxisId="r" dataKey="amount" name="Value" fill="#a7d6b8" radius={[3, 3, 0, 0]} barSize={22} />
+                <Bar yAxisId="l" dataKey="count" name="Invoices" fill="#2d9a47" radius={[3, 3, 0, 0]} barSize={22} />
+                <Bar yAxisId="r" dataKey="amount" name="Value" fill="#b5e3c4" radius={[3, 3, 0, 0]} barSize={22} />
               </BarChart>
             </ResponsiveContainer>
             </div>

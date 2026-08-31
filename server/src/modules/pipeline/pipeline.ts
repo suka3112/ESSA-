@@ -29,6 +29,7 @@ import { mockExtractDocument } from '../../integrations/azure-gpt.mock';
 import { SharePointMock } from '../../integrations/sharepoint.mock';
 import { SapMock } from '../../integrations/sap.mock';
 import { addTimeline, notifyRole, notifyUser, touchInvoice } from './helpers';
+import { emailContent } from '../email/templates';
 
 // ---------------------------------------------------------------- exceptions
 export function createException(
@@ -87,7 +88,11 @@ export function createException(
   addTimeline(invoice.id, 'EXCEPTION_CREATED', `Exception ${exc.code} created`, {
     detail: title, status: 'WARNING', reference: exc.code, correlationId: invoice.correlationId,
   });
-  notifyRole('AP_PROCESSOR', 'EXCEPTION', `Exception ${exc.code}: ${title}`, `${invoice.invoiceNumber} · ${detail}`, { invoiceId: invoice.id });
+  {
+    // Content comes from the configurable EXCEPTION_CREATED email template.
+    const msg = emailContent('EXCEPTION_CREATED', { exceptionCode: exc.code, exceptionTitle: title, invoiceNumber: invoice.invoiceNumber, detail });
+    notifyRole('AP_PROCESSOR', 'EXCEPTION', msg.title, msg.body, { invoiceId: invoice.id });
+  }
   return exc;
 }
 
@@ -546,7 +551,9 @@ export function activateNextStep(invoice: Invoice, instanceId: string): Workflow
   instance.currentStepNo = next.stepNo;
   markDirty();
   if (next.assignedTo) {
-    notifyUser(next.assignedTo, 'APPROVAL', `Approval requested: ${invoice.invoiceNumber}`, `${invoice.vendorName} · ${invoice.currency} ${invoice.amount.toLocaleString('en-US')} · step "${next.name}"`, { invoiceId: invoice.id });
+    // Content comes from the configurable APPROVAL_REQUESTED email template.
+    const msg = emailContent('APPROVAL_REQUESTED', { invoiceNumber: invoice.invoiceNumber, vendorName: invoice.vendorName, currency: invoice.currency, amount: invoice.amount.toLocaleString('en-US'), stepName: next.name });
+    notifyUser(next.assignedTo, 'APPROVAL', msg.title, msg.body, { invoiceId: invoice.id });
   }
   addTimeline(invoice.id, 'APPROVAL_REQUESTED', `Approval requested: ${next.name}`, {
     detail: next.assignedToName ? `Assigned to ${next.assignedToName}` : `Role ${next.role}`,
@@ -649,7 +656,11 @@ export function actOnStep(
     addTimeline(invoice.id, 'APPROVAL_DELEGATED', `${step.name} delegated to ${delegate?.name ?? delegateTo}`, {
       actorType: 'USER', actorName: user.name, status: 'INFO', correlationId: invoice.correlationId,
     });
-    if (delegate) notifyUser(delegate.id, 'APPROVAL', `Approval delegated to you: ${invoice.invoiceNumber}`, `${step.name} · delegated by ${user.name}`, { invoiceId: invoice.id });
+    if (delegate) {
+      // Content comes from the configurable APPROVAL_DELEGATED email template.
+      const msg = emailContent('APPROVAL_DELEGATED', { invoiceNumber: invoice.invoiceNumber, stepName: step.name, delegatedBy: user.name });
+      notifyUser(delegate.id, 'APPROVAL', msg.title, msg.body, { invoiceId: invoice.id });
+    }
   }
   markDirty();
   touchInvoice(invoice);

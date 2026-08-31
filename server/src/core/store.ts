@@ -55,6 +55,8 @@ export interface Database {
   sharePointItems: T.SharePointMonitorItem[];
   notifications: T.NotificationRecord[];
   notificationRules: T.NotificationRule[];
+  emailTemplates: T.EmailTemplate[];
+  emailTemplateVersions: T.EmailTemplateVersion[];
   auditEvents: T.AuditEvent[];
   technicalLogs: T.TechnicalLog[];
   integrationJobs: T.IntegrationJob[];

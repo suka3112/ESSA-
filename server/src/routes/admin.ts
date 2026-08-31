@@ -5,6 +5,7 @@ import { ApiError, Errors } from '../core/errors';
 import { audit } from '../core/audit';
 import { ids, nowIso } from '../core/ids';
 import { notifyRole } from '../modules/pipeline/helpers';
+import { emailContent } from '../modules/email/templates';
 
 export const adminRouter = Router();
 
@@ -103,8 +104,12 @@ adminRouter.post('/configuration/versions/:id/transition', authorize('CONFIG_PUB
         .filter((o) => db.validationRules.some((r) => r.id === o.ruleId && r.configVersionId === 'cfg-1'))
         .map((o) => ({ ...o, id: `${o.id}@${version.versionNo}`, ruleId: `${o.ruleId}@${version.versionNo}` }))
     );
-    notifyRole('ADMINISTRATOR', 'CONFIGURATION', `Configuration ${version.versionNo} published`, `${version.label} - effective ${version.effectiveFrom}. New invoices will process on this version.`);
-    notifyRole('AP_REVIEWER', 'CONFIGURATION', `Configuration ${version.versionNo} published`, `${version.label} - effective ${version.effectiveFrom}.`);
+    // Content comes from the configurable CONFIG_PUBLISHED_* email templates.
+    const ctx = { versionNo: version.versionNo, label: version.label, effectiveFrom: version.effectiveFrom };
+    const adminMsg = emailContent('CONFIG_PUBLISHED_ADMIN', ctx);
+    const teamMsg = emailContent('CONFIG_PUBLISHED_TEAM', ctx);
+    notifyRole('ADMINISTRATOR', 'CONFIGURATION', adminMsg.title, adminMsg.body);
+    notifyRole('AP_REVIEWER', 'CONFIGURATION', teamMsg.title, teamMsg.body);
   } else if (action === 'RETIRE') {
     if (version.status !== 'ACTIVE') throw Errors.conflict('Only the active version can be retired');
     version.status = 'RETIRED';

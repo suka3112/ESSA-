@@ -1064,6 +1064,45 @@ export interface NotificationRule {
   active: boolean;
 }
 
+// ---------- Email templates (Administration → Email Templates) ----------
+export interface EmailRecipients {
+  /** Descriptive To audience — actual resolution stays with the sending scenario. */
+  to: string;
+  cc?: string;
+  bcc?: string;
+}
+
+export interface EmailTemplate {
+  id: string;
+  name: string;
+  /** Scenario/event key this template serves, e.g. APPROVAL_REQUESTED. */
+  scenario: string;
+  description?: string;
+  subject: string;
+  bodyHtml: string;
+  recipients: EmailRecipients;
+  requiredPlaceholders: string[];
+  status: 'ACTIVE' | 'INACTIVE';
+  /** Seeded for a built-in scenario — cannot be deleted, only deactivated. */
+  system: boolean;
+  version: number;
+  createdAt: string;
+  createdBy: string;
+  updatedAt: string;
+  updatedBy: string;
+}
+
+export interface EmailTemplateVersion {
+  id: string;
+  templateId: string;
+  version: number;
+  action: 'CREATED' | 'UPDATED' | 'ACTIVATED' | 'DEACTIVATED' | 'DUPLICATED' | 'RESTORED';
+  snapshot: Pick<EmailTemplate, 'name' | 'scenario' | 'description' | 'subject' | 'bodyHtml' | 'recipients' | 'requiredPlaceholders' | 'status'>;
+  changedAt: string;
+  changedBy: string;
+  note?: string;
+}
+
 // ---------- Audit & Logs ----------
 export interface AuditEvent {
   id: string;

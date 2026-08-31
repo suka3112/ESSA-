@@ -5,18 +5,33 @@ export default {
     extend: {
       colors: {
         // ESSA brand green scale
+        // ESSA Brand Guidelines (Jul 2026) — Primary Green #2d9a47,
+        // Secondary Light Green #6dc781 (scale anchored on the brand values).
         essa: {
-          50: '#eef8f0',
-          100: '#d7eedd',
-          200: '#b0ddbe',
-          300: '#7fc697',
-          400: '#4daa6e',
-          500: '#2e9052',
-          600: '#1f7a41', // primary
-          700: '#1a6337',
-          800: '#174f2e',
-          900: '#134127',
-          950: '#0a2415',
+          50: '#eef9f1',
+          100: '#d8f0e0',
+          200: '#b5e3c4',
+          300: '#6dc781', // brand secondary — Light Green
+          400: '#4cb264',
+          500: '#38a653',
+          600: '#2d9a47', // brand primary — Primary Green
+          700: '#247e3a',
+          800: '#1d6530',
+          900: '#175226',
+          950: '#0b2e15',
+        },
+        // ESSA Primary Blue #0075a9 / Secondary Dark Blue #0b5b80.
+        essablue: {
+          50: '#e8f4fa',
+          100: '#cfe9f4',
+          200: '#9fd3e9',
+          300: '#66b8d9',
+          400: '#2e97c4',
+          500: '#0075a9', // brand primary — Primary Blue
+          600: '#066a96',
+          700: '#0b5b80', // brand secondary — Dark Blue
+          800: '#0c4a67',
+          900: '#0b3d55',
         },
         surface: '#ffffff',
         canvas: '#f6f8f7',
@@ -32,14 +47,14 @@ export default {
           strong: '#d1d5db',
         },
         semantic: {
-          success: '#1f7a41',
-          successBg: '#e8f5ec',
+          success: '#2d9a47',
+          successBg: '#e6f5ea',
           warning: '#b45309',
           warningBg: '#fef5e7',
           error: '#b91c1c',
           errorBg: '#fdecec',
-          info: '#1d4ed8',
-          infoBg: '#e8effd',
+          info: '#0075a9',
+          infoBg: '#e5f2f9',
           pending: '#6d28d9',
           pendingBg: '#f1ecfd',
           draft: '#4b5563',
@@ -47,11 +62,13 @@ export default {
         },
       },
       fontFamily: {
+        // ESSA Brand Guidelines §4.1 — Segoe UI is the primary typeface.
         sans: [
+          'Segoe UI',
+          'Segoe UI Variable Text',
           'Inter',
           '-apple-system',
           'BlinkMacSystemFont',
-          'Segoe UI',
           'Roboto',
           'Helvetica Neue',
           'Arial',

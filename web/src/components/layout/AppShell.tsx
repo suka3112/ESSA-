@@ -48,6 +48,7 @@ const NAV: NavItem[] = [
       // Reference data, not an SLA setting — its own item (review, 25 Aug).
       { label: 'Exception Codes', to: '/admin/exception-codes', perm: 'CONFIG_VIEW' },
       { label: 'Workflows & Approval Hierarchy', to: '/admin/workflows', perm: 'CONFIG_VIEW' },
+      { label: 'Email Templates', to: '/admin/email-templates', perm: 'CONFIG_VIEW' },
       { label: 'Users & Roles', to: '/admin/users', perm: 'USER_ADMIN' },
     ],
   },

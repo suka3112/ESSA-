@@ -2,6 +2,7 @@ import { createApp } from './app';
 import { getDb, initStore, resetStore } from './core/store';
 import { buildBaseDb, runScenarioSeed, SEED_VERSION } from './db/seed';
 import { techLog } from './core/logger';
+import { ensureEmailTemplates } from './modules/email/templates';
 
 const PORT = Number(process.env.PORT ?? 4400);
 
@@ -14,6 +15,11 @@ if (!seeded && getDb()._seedVersion !== SEED_VERSION) {
 if (seeded) {
   runScenarioSeed();
 }
+
+// Email Template Configuration: make sure the collections and the system
+// templates for every built-in scenario exist — including on local snapshots
+// created before the feature shipped (no reseed required).
+ensureEmailTemplates(getDb());
 
 const app = createApp();
 app.listen(PORT, () => {

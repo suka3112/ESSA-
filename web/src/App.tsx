@@ -26,6 +26,7 @@ import SlaSimulationPage from './pages/admin/sla/SlaSimulationPage';
 import SlaMonitorPage from './pages/admin/sla/SlaMonitorPage';
 import ExceptionCodesPage from './pages/admin/ExceptionCodesPage';
 import UsersPage from './pages/admin/UsersPage';
+import EmailTemplatesPage from './pages/admin/EmailTemplatesPage';
 import PurchaseOrdersPage from './pages/PurchaseOrdersPage';
 import AuditLogPage from './pages/AuditLogPage';
 import HelpPage from './pages/HelpPage';
@@ -78,6 +79,7 @@ export default function App() {
       <Route path="/admin/exception-codes" element={<Guard perm="CONFIG_VIEW"><ExceptionCodesPage /></Guard>} />
       <Route path="/admin/sla/exception-codes" element={<Navigate to="/admin/exception-codes" replace />} />
       <Route path="/admin/workflows" element={<Guard perm="CONFIG_VIEW"><WorkflowsPage /></Guard>} />
+      <Route path="/admin/email-templates" element={<Guard perm="CONFIG_VIEW"><EmailTemplatesPage /></Guard>} />
       <Route path="/admin/users" element={<Guard perm="USER_ADMIN"><UsersPage /></Guard>} />
       <Route path="/audit" element={<Guard perm="AUDIT_VIEW"><AuditLogPage /></Guard>} />
       {/* Technical logs removed from the product (design review) — logging stays server-side. */}

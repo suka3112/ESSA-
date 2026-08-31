@@ -10,6 +10,7 @@ import { integrationRouter } from './routes/integrations';
 import { adminRouter } from './routes/admin';
 import { slaRouter } from './routes/sla';
 import { miscRouter } from './routes/misc';
+import { emailTemplateRouter } from './routes/email-templates';
 
 export function createApp() {
   const app = express();
@@ -30,6 +31,7 @@ export function createApp() {
   api.use(vendorRouter);
   api.use(integrationRouter);
   api.use(adminRouter);
+  api.use(emailTemplateRouter);
   api.use(slaRouter);
   api.use(miscRouter);
   app.use('/api/v1', api);

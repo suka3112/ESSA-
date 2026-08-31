@@ -83,6 +83,8 @@ export function buildBaseDb(): Database {
     sharePointItems: [],
     notifications: [],
     notificationRules: structuredClone(NOTIFICATION_RULES),
+    emailTemplates: [],
+    emailTemplateVersions: [],
     auditEvents: [],
     technicalLogs: [],
     integrationJobs: [],

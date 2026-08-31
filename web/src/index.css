@@ -34,6 +34,6 @@
 }
 
 :focus-visible {
-  outline: 2px solid #1f7a41;
+  outline: 2px solid #2d9a47; /* ESSA Primary Green */
   outline-offset: 1px;
 }
